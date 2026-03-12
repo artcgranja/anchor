@@ -60,4 +60,4 @@ jobs:
         run: uv sync --all-extras --group dev
 
       - name: Run tests with coverage
-        run: uv run pytest --cov=astro_context --cov-report=xml -q
+        run: uv run pytest --cov=anchor --cov-report=xml -q
