@@ -10,11 +10,11 @@ from typing import Any, Literal, cast
 from astro_context.exceptions import AstroContextError, RetrieverError
 from astro_context.models.context import ContextItem
 from astro_context.models.query import QueryBundle
-from astro_context.retrieval._rrf import rrf_fuse
 from astro_context.protocols.postprocessor import AsyncPostProcessor, PostProcessor
 from astro_context.protocols.query_transform import QueryTransformer
 from astro_context.protocols.reranker import AsyncReranker, Reranker
 from astro_context.protocols.retriever import AsyncRetriever, Retriever
+from astro_context.retrieval._rrf import rrf_fuse
 
 SyncStepFn = Callable[[list[ContextItem], QueryBundle], list[ContextItem]]
 AsyncStepFn = Callable[[list[ContextItem], QueryBundle], Awaitable[list[ContextItem]]]
