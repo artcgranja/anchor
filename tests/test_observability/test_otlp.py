@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import sys
+import builtins
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -18,16 +19,14 @@ from astro_context.observability.otlp import (
     _map_span_kind,
 )
 
+_real_import = builtins.__import__
 
-def _hide_otel(modules: dict[str, object]) -> dict[str, object]:
-    """Return *modules* with every ``opentelemetry`` key mapped to ``None``.
 
-    Passing this to ``patch.dict(sys.modules, ...)`` makes any
-    ``import opentelemetry.*`` inside the patched block raise
-    ``ImportError``, regardless of whether the package is really installed.
-    """
-    blocked = {k: None for k in list(modules) if k.startswith("opentelemetry")}
-    return blocked
+def _block_otel_import(name: str, *args: Any, **kwargs: Any) -> Any:
+    """Raise ``ImportError`` for any ``opentelemetry`` import."""
+    if name.startswith("opentelemetry"):
+        raise ImportError(name)
+    return _real_import(name, *args, **kwargs)
 
 
 class TestOTLPSpanExporter:
@@ -35,14 +34,14 @@ class TestOTLPSpanExporter:
 
     def test_import_error_without_otel(self) -> None:
         """Verify ImportError with clear message when OTel not installed."""
-        with patch.dict(sys.modules, _hide_otel(sys.modules)), pytest.raises(
+        with patch("builtins.__import__", side_effect=_block_otel_import), pytest.raises(
             ImportError, match="opentelemetry"
         ):
             OTLPSpanExporter()
 
     def test_import_error_custom_endpoint(self) -> None:
         """Verify ImportError even with custom parameters."""
-        with patch.dict(sys.modules, _hide_otel(sys.modules)), pytest.raises(
+        with patch("builtins.__import__", side_effect=_block_otel_import), pytest.raises(
             ImportError, match="pip install astro-context"
         ):
             OTLPSpanExporter(
@@ -57,14 +56,14 @@ class TestOTLPMetricsExporter:
 
     def test_import_error_without_otel(self) -> None:
         """Verify ImportError with clear message when OTel not installed."""
-        with patch.dict(sys.modules, _hide_otel(sys.modules)), pytest.raises(
+        with patch("builtins.__import__", side_effect=_block_otel_import), pytest.raises(
             ImportError, match="opentelemetry"
         ):
             OTLPMetricsExporter()
 
     def test_import_error_custom_endpoint(self) -> None:
         """Verify ImportError even with custom parameters."""
-        with patch.dict(sys.modules, _hide_otel(sys.modules)), pytest.raises(
+        with patch("builtins.__import__", side_effect=_block_otel_import), pytest.raises(
             ImportError, match="pip install astro-context"
         ):
             OTLPMetricsExporter(
