@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -17,22 +19,35 @@ from astro_context.observability.otlp import (
 )
 
 
+def _hide_otel(modules: dict[str, object]) -> dict[str, object]:
+    """Return *modules* with every ``opentelemetry`` key mapped to ``None``.
+
+    Passing this to ``patch.dict(sys.modules, ...)`` makes any
+    ``import opentelemetry.*`` inside the patched block raise
+    ``ImportError``, regardless of whether the package is really installed.
+    """
+    blocked = {k: None for k in list(modules) if k.startswith("opentelemetry")}
+    return blocked
+
+
 class TestOTLPSpanExporter:
     """Tests for the OTLPSpanExporter class."""
 
     def test_import_error_without_otel(self) -> None:
         """Verify ImportError with clear message when OTel not installed."""
-        with pytest.raises(ImportError, match="opentelemetry"):
-            OTLPSpanExporter()
+        with patch.dict(sys.modules, _hide_otel(sys.modules)):
+            with pytest.raises(ImportError, match="opentelemetry"):
+                OTLPSpanExporter()
 
     def test_import_error_custom_endpoint(self) -> None:
         """Verify ImportError even with custom parameters."""
-        with pytest.raises(ImportError, match="pip install astro-context"):
-            OTLPSpanExporter(
-                endpoint="http://collector:4318",
-                service_name="my-service",
-                headers={"Authorization": "Bearer token"},
-            )
+        with patch.dict(sys.modules, _hide_otel(sys.modules)):
+            with pytest.raises(ImportError, match="pip install astro-context"):
+                OTLPSpanExporter(
+                    endpoint="http://collector:4318",
+                    service_name="my-service",
+                    headers={"Authorization": "Bearer token"},
+                )
 
 
 class TestOTLPMetricsExporter:
@@ -40,16 +55,18 @@ class TestOTLPMetricsExporter:
 
     def test_import_error_without_otel(self) -> None:
         """Verify ImportError with clear message when OTel not installed."""
-        with pytest.raises(ImportError, match="opentelemetry"):
-            OTLPMetricsExporter()
+        with patch.dict(sys.modules, _hide_otel(sys.modules)):
+            with pytest.raises(ImportError, match="opentelemetry"):
+                OTLPMetricsExporter()
 
     def test_import_error_custom_endpoint(self) -> None:
         """Verify ImportError even with custom parameters."""
-        with pytest.raises(ImportError, match="pip install astro-context"):
-            OTLPMetricsExporter(
-                endpoint="http://collector:4318",
-                service_name="my-service",
-            )
+        with patch.dict(sys.modules, _hide_otel(sys.modules)):
+            with pytest.raises(ImportError, match="pip install astro-context"):
+                OTLPMetricsExporter(
+                    endpoint="http://collector:4318",
+                    service_name="my-service",
+                )
 
 
 class TestConvertSpan:
