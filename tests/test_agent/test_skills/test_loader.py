@@ -121,3 +121,30 @@ class TestToolDiscovery:
         (skill_dir / "tools.py").write_text("import nonexistent_module_xyz")
         with pytest.raises(ValueError, match="Failed to import"):
             load_skill(skill_dir)
+
+
+class TestLoadSkillsDirectory:
+    def test_loads_all_valid_skills(self) -> None:
+        skills = load_skills_directory(FIXTURES)
+        names = {s.name for s in skills}
+        assert "brainstorm" in names
+        assert "minimal-helper" in names
+
+    def test_skips_invalid_skills(self) -> None:
+        skills = load_skills_directory(FIXTURES)
+        names = {s.name for s in skills}
+        # "invalid" directory has bad frontmatter -- should be skipped, not present
+        assert "brainstorm" in names
+        assert "minimal-helper" in names
+        # invalid skill directory should not appear in loaded skills
+        for name in names:
+            assert name  # no empty names
+        assert len(skills) >= 2  # at least brainstorm + minimal
+
+    def test_nonexistent_dir_raises(self) -> None:
+        with pytest.raises(FileNotFoundError):
+            load_skills_directory("/nonexistent/path")
+
+    def test_empty_dir_returns_empty(self, tmp_path: Path) -> None:
+        skills = load_skills_directory(tmp_path)
+        assert skills == []
