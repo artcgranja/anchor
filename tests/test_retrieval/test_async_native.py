@@ -26,9 +26,16 @@ from astro_context.retrieval.async_retriever import (
 
 
 async def _fake_embed(text: str) -> list[float]:
-    """Deterministic fake embedding based on text hash."""
-    h = hash(text) % 100
-    return [h / 100.0] * 3
+    """Deterministic fake embedding with distinct directions per text.
+
+    Uses hashlib (not built-in hash) for cross-run determinism and
+    generates 3 independent components so that cosine similarity can
+    differentiate between vectors.
+    """
+    import hashlib
+
+    digest = hashlib.sha256(text.encode()).digest()
+    return [b / 255.0 for b in digest[:3]]
 
 
 async def _fake_score(query: str, doc: str) -> float:
