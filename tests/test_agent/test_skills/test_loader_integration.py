@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from astro_context.agent.agent import Agent
 from astro_context.agent.skills.models import Skill
 from astro_context.agent.skills.registry import SkillRegistry
 from astro_context.agent.tools import AgentTool
@@ -79,9 +80,6 @@ class TestActivationFlow:
         names = {t.name for t in tools}
         assert "native_tool" in names
         assert "save_brainstorm_result" in names
-
-
-from astro_context.agent.agent import Agent
 
 
 class _FakeClient:

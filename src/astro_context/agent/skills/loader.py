@@ -31,16 +31,21 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     Frontmatter is delimited by ``---`` lines at the start of the file.
     Returns (frontmatter_dict, body_text).
     """
-    text = text.strip()
-    if not text.startswith("---"):
-        return {}, text
+    lines = text.strip().splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, text.strip()
 
-    end_idx = text.find("---", 3)
-    if end_idx == -1:
-        return {}, text
+    end_line = None
+    for i, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            end_line = i
+            break
 
-    raw_fm = text[3:end_idx].strip()
-    body = text[end_idx + 3:].strip()
+    if end_line is None:
+        return {}, text.strip()
+
+    raw_fm = "\n".join(lines[1:end_line]).strip()
+    body = "\n".join(lines[end_line + 1:]).strip()
 
     fm: dict[str, str] = {}
     for line in raw_fm.splitlines():
@@ -98,6 +103,9 @@ def _discover_tools(skill_dir: Path, skill_name: str) -> tuple[AgentTool, ...]:
     logger.info("Loading tools from %s as %s", tools_path, module_name)
 
     try:
+        # Remove any previously-cached version so reloads pick up changes.
+        sys.modules.pop(module_name, None)
+
         spec = importlib.util.spec_from_file_location(module_name, tools_path)
         if spec is None or spec.loader is None:
             msg = f"Cannot load module spec from {tools_path}"
