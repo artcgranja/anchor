@@ -4,6 +4,10 @@
    Primary: #3b82f6 (Blue)  |  Accent: #6B8E6B (Sage)  |  Steel: #64748b
    ========================================================================== */
 
+/* ── Light/Dark image toggling ── */
+[data-md-color-scheme="default"] .only-dark { display: none; }
+[data-md-color-scheme="slate"] .only-light { display: none; }
+
 /* ── Fonts ── */
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
 

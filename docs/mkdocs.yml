@@ -28,8 +28,8 @@ theme:
   font:
     text: ""
     code: Fira Code
-  logo: docs/assets/logo-dark.svg
-  favicon: docs/assets/logo-light.svg
+  logo: assets/logo-dark.svg
+  favicon: assets/logo-light.svg
   icon:
   features:
     - announce.dismiss
