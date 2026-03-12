@@ -11,6 +11,11 @@ hide:
 
 <div class="hero" markdown>
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg" width="220">
+  <img src="assets/logo-light.svg" alt="anchor" width="220">
+</picture>
+
 # anchor
 
 ### Context is the product. The LLM is just the consumer.

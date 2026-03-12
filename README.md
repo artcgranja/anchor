@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/arthurgranja/anchor/main/docs/docs/assets/logo-light.png" alt="anchor" width="400">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/arthurgranja/anchor/main/docs/docs/assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/arthurgranja/anchor/main/docs/docs/assets/logo-light.svg">
+    <img src="https://raw.githubusercontent.com/arthurgranja/anchor/main/docs/docs/assets/logo-light.svg" alt="anchor" width="280">
+  </picture>
 </p>
 
 <p align="center">
