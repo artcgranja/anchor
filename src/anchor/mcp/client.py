@@ -48,7 +48,7 @@ class FastMCPClientBridge:
 
     def __init__(self, config: MCPServerConfig) -> None:
         self._config = config
-        self._fastmcp_client: Client | None = None
+        self._fastmcp_client: Client | None = None  # type: ignore[type-arg]
         self._cached_tools: list[ToolSchema] | None = None
 
     async def connect(self) -> None:
@@ -69,7 +69,7 @@ class FastMCPClientBridge:
                     transport="unknown",
                 )
 
-            self._fastmcp_client = await client.__aenter__()
+            self._fastmcp_client = await client.__aenter__()  # type: ignore[no-untyped-call]
         except MCPConnectionError:
             raise
         except Exception as exc:
@@ -84,7 +84,7 @@ class FastMCPClientBridge:
         """Close the FastMCP Client connection."""
         if self._fastmcp_client is not None:
             try:
-                await self._fastmcp_client.__aexit__(None, None, None)
+                await self._fastmcp_client.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
             except Exception:
                 logger.warning(
                     "Error disconnecting from MCP server '%s'",
