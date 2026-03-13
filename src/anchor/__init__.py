@@ -351,7 +351,6 @@ from anchor.llm import (
     ProviderError,
     ProviderNotInstalledError,
     RateLimitError,
-    Role,
     ServerError,
     StopReason,
     StreamChunk,
