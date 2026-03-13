@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from anchor.models.memory import MemoryType
 from anchor.storage._base import BaseEntryStoreMixin
 from tests.conftest import make_memory_entry as _make_entry
@@ -410,6 +412,8 @@ class TestSharedMatchesFilters:
     def test_matches_filters_passes_matching_entry(
         self, entry_store: BaseEntryStoreMixin
     ) -> None:
+        if not hasattr(entry_store, "_matches_filters"):
+            pytest.skip("SqliteEntryStore does filtering in SQL")
         entry = _make_entry(entry_id="mf1", user_id="alice")
         assert entry_store._matches_filters(
             entry,
@@ -424,6 +428,8 @@ class TestSharedMatchesFilters:
     def test_matches_filters_rejects_non_matching_entry(
         self, entry_store: BaseEntryStoreMixin
     ) -> None:
+        if not hasattr(entry_store, "_matches_filters"):
+            pytest.skip("SqliteEntryStore does filtering in SQL")
         entry = _make_entry(entry_id="mf2", user_id="alice")
         assert not entry_store._matches_filters(
             entry,
