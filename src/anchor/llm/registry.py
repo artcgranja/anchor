@@ -7,11 +7,13 @@ lazy imports, and provides the create_provider() factory function.
 from __future__ import annotations
 
 import importlib
+import threading
 from typing import Any
 
 from anchor.llm.base import BaseLLMProvider, LLMProvider
 from anchor.llm.errors import ProviderNotInstalledError
 
+_LOCK = threading.Lock()
 _PROVIDERS: dict[str, type[BaseLLMProvider]] = {}
 
 # Maps provider name -> module path for lazy loading
@@ -50,7 +52,8 @@ _PROVIDER_EXTRAS: dict[str, str] = {
 
 def register_provider(name: str, cls: type[BaseLLMProvider]) -> None:
     """Register a provider adapter."""
-    _PROVIDERS[name] = cls
+    with _LOCK:
+        _PROVIDERS[name] = cls
 
 
 def create_provider(
@@ -70,15 +73,16 @@ def create_provider(
     """
     provider_name, model_name = _parse_model_string(model)
 
-    if provider_name not in _PROVIDERS:
-        _try_import_provider(provider_name)
+    with _LOCK:
+        if provider_name not in _PROVIDERS:
+            _try_import_provider(provider_name)
 
-    if provider_name not in _PROVIDERS:
-        package = _PROVIDER_PACKAGES.get(provider_name, provider_name)
-        extra = _PROVIDER_EXTRAS.get(provider_name, provider_name)
-        raise ProviderNotInstalledError(provider_name, package, extra)
+        if provider_name not in _PROVIDERS:
+            package = _PROVIDER_PACKAGES.get(provider_name, provider_name)
+            extra = _PROVIDER_EXTRAS.get(provider_name, provider_name)
+            raise ProviderNotInstalledError(provider_name, package, extra)
 
-    cls = _PROVIDERS[provider_name]
+        cls = _PROVIDERS[provider_name]
     primary = cls(model=model_name, api_key=api_key, **kwargs)
 
     if fallbacks:
@@ -103,7 +107,10 @@ def _parse_model_string(model: str) -> tuple[str, str]:
 
 
 def _try_import_provider(name: str) -> None:
-    """Attempt to lazily import a provider module."""
+    """Attempt to lazily import a provider module.
+
+    Note: Caller must hold ``_LOCK`` before calling this function.
+    """
     module_path = _PROVIDER_MODULES.get(name)
     if module_path:
         try:

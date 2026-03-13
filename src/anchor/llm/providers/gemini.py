@@ -258,6 +258,16 @@ class GeminiProvider(BaseLLMProvider):
     # Message conversion helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _find_tool_name(messages: list[Message], tool_call_id: str) -> str:
+        """Find the function name for a tool_call_id by scanning message history."""
+        for msg in messages:
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    if tc.id == tool_call_id:
+                        return tc.name
+        return tool_call_id  # fallback to ID if not found
+
     def _extract_system_and_convert(
         self, messages: list[Message]
     ) -> tuple[str | None, list[dict[str, Any]]]:
@@ -288,7 +298,7 @@ class GeminiProvider(BaseLLMProvider):
                             "parts": [
                                 {
                                     "function_response": {
-                                        "name": msg.tool_result.tool_call_id,
+                                        "name": self._find_tool_name(messages, msg.tool_result.tool_call_id),
                                         "response": {"content": msg.tool_result.content},
                                     }
                                 }

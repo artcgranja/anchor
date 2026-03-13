@@ -162,9 +162,15 @@ class AnthropicProvider(BaseLLMProvider):
             call_kwargs["stop_sequences"] = kwargs["stop"]
 
         try:
+            input_tokens: int | None = None
             with client.messages.stream(**call_kwargs) as stream:
                 for event in stream:
-                    chunk = self._parse_stream_event(event)
+                    # Track input_tokens from message_start
+                    if event.type == "message_start":
+                        msg_usage = getattr(event.message, "usage", None)
+                        if msg_usage is not None:
+                            input_tokens = getattr(msg_usage, "input_tokens", None)
+                    chunk = self._parse_stream_event(event, input_tokens=input_tokens)
                     if chunk is not None:
                         yield chunk
         except Exception as exc:
@@ -224,9 +230,15 @@ class AnthropicProvider(BaseLLMProvider):
             call_kwargs["stop_sequences"] = kwargs["stop"]
 
         try:
+            input_tokens: int | None = None
             async with client.messages.stream(**call_kwargs) as stream:
                 async for event in stream:
-                    chunk = self._parse_stream_event(event)
+                    # Track input_tokens from message_start
+                    if event.type == "message_start":
+                        msg_usage = getattr(event.message, "usage", None)
+                        if msg_usage is not None:
+                            input_tokens = getattr(msg_usage, "input_tokens", None)
+                    chunk = self._parse_stream_event(event, input_tokens=input_tokens)
                     if chunk is not None:
                         yield chunk
         except Exception as exc:
@@ -376,7 +388,9 @@ class AnthropicProvider(BaseLLMProvider):
     # Stream event parsing
     # ------------------------------------------------------------------
 
-    def _parse_stream_event(self, event: Any) -> StreamChunk | None:
+    def _parse_stream_event(
+        self, event: Any, *, input_tokens: int | None = None
+    ) -> StreamChunk | None:
         """Parse a single Anthropic stream event into a StreamChunk, or None."""
         event_type = event.type
 
@@ -407,7 +421,18 @@ class AnthropicProvider(BaseLLMProvider):
 
         if event_type == "message_delta":
             stop_reason = _map_stop_reason(event.delta.stop_reason)
-            return StreamChunk(stop_reason=stop_reason)
+            # Extract output_tokens from the message_delta usage
+            usage: Usage | None = None
+            event_usage = getattr(event, "usage", None)
+            if event_usage is not None:
+                output_tokens = getattr(event_usage, "output_tokens", 0)
+                prompt = input_tokens or 0
+                usage = Usage(
+                    prompt_tokens=prompt,
+                    completion_tokens=output_tokens,
+                    total_tokens=prompt + output_tokens,
+                )
+            return StreamChunk(stop_reason=stop_reason, usage=usage)
 
         return None
 

@@ -13,8 +13,7 @@ Self-registers via register_provider() at module import time.
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator
+from typing import Any, AsyncIterator, Iterator
 
 from anchor.llm.base import BaseLLMProvider
 from anchor.llm.errors import (
@@ -28,32 +27,16 @@ from anchor.llm.errors import (
 from anchor.llm.models import (
     LLMResponse,
     Message,
-    Role,
-    StopReason,
     StreamChunk,
-    ToolCall,
-    ToolCallDelta,
     ToolSchema,
-    Usage,
+)
+from anchor.llm.providers._openai_compat import (
+    convert_messages,
+    convert_tool,
+    parse_response,
+    parse_stream_chunk,
 )
 from anchor.llm.registry import register_provider
-
-
-# ---------------------------------------------------------------------------
-# Stop reason mapping
-# ---------------------------------------------------------------------------
-
-_STOP_REASON_MAP: dict[str, StopReason] = {
-    "stop": StopReason.STOP,
-    "length": StopReason.MAX_TOKENS,
-    "tool_calls": StopReason.TOOL_USE,
-}
-
-
-def _map_stop_reason(finish_reason: str | None) -> StopReason:
-    if finish_reason is None:
-        return StopReason.STOP
-    return _STOP_REASON_MAP.get(finish_reason, StopReason.STOP)
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +77,7 @@ class LiteLLMProvider(BaseLLMProvider):
     ) -> LLMResponse:
         import litellm  # noqa: PLC0415 — lazy import
 
-        converted = self._convert_messages(messages)
+        converted = convert_messages(messages)
 
         call_kwargs: dict[str, Any] = {
             "model": self._model,
@@ -102,7 +85,7 @@ class LiteLLMProvider(BaseLLMProvider):
             "max_tokens": kwargs.get("max_tokens", 4096),
         }
         if tools:
-            call_kwargs["tools"] = [self._convert_tool(t) for t in tools]
+            call_kwargs["tools"] = [convert_tool(t) for t in tools]
         if kwargs.get("temperature") is not None:
             call_kwargs["temperature"] = kwargs["temperature"]
         if kwargs.get("stop"):
@@ -113,7 +96,7 @@ class LiteLLMProvider(BaseLLMProvider):
         except Exception as exc:
             raise self._map_error(exc) from exc
 
-        return self._parse_response(response)
+        return parse_response(response, self.provider_name)
 
     def _do_stream(
         self,
@@ -123,7 +106,7 @@ class LiteLLMProvider(BaseLLMProvider):
     ) -> Iterator[StreamChunk]:
         import litellm  # noqa: PLC0415 — lazy import
 
-        converted = self._convert_messages(messages)
+        converted = convert_messages(messages)
 
         call_kwargs: dict[str, Any] = {
             "model": self._model,
@@ -132,7 +115,7 @@ class LiteLLMProvider(BaseLLMProvider):
             "stream": True,
         }
         if tools:
-            call_kwargs["tools"] = [self._convert_tool(t) for t in tools]
+            call_kwargs["tools"] = [convert_tool(t) for t in tools]
         if kwargs.get("temperature") is not None:
             call_kwargs["temperature"] = kwargs["temperature"]
         if kwargs.get("stop"):
@@ -141,7 +124,7 @@ class LiteLLMProvider(BaseLLMProvider):
         try:
             stream = litellm.completion(**call_kwargs)
             for raw_chunk in stream:
-                chunk = self._parse_stream_chunk(raw_chunk)
+                chunk = parse_stream_chunk(raw_chunk)
                 if chunk is not None:
                     yield chunk
         except Exception as exc:
@@ -155,7 +138,7 @@ class LiteLLMProvider(BaseLLMProvider):
     ) -> LLMResponse:
         import litellm  # noqa: PLC0415 — lazy import
 
-        converted = self._convert_messages(messages)
+        converted = convert_messages(messages)
 
         call_kwargs: dict[str, Any] = {
             "model": self._model,
@@ -163,7 +146,7 @@ class LiteLLMProvider(BaseLLMProvider):
             "max_tokens": kwargs.get("max_tokens", 4096),
         }
         if tools:
-            call_kwargs["tools"] = [self._convert_tool(t) for t in tools]
+            call_kwargs["tools"] = [convert_tool(t) for t in tools]
         if kwargs.get("temperature") is not None:
             call_kwargs["temperature"] = kwargs["temperature"]
         if kwargs.get("stop"):
@@ -174,7 +157,7 @@ class LiteLLMProvider(BaseLLMProvider):
         except Exception as exc:
             raise self._map_error(exc) from exc
 
-        return self._parse_response(response)
+        return parse_response(response, self.provider_name)
 
     async def _do_astream(
         self,
@@ -184,7 +167,7 @@ class LiteLLMProvider(BaseLLMProvider):
     ) -> AsyncIterator[StreamChunk]:
         import litellm  # noqa: PLC0415 — lazy import
 
-        converted = self._convert_messages(messages)
+        converted = convert_messages(messages)
 
         call_kwargs: dict[str, Any] = {
             "model": self._model,
@@ -193,7 +176,7 @@ class LiteLLMProvider(BaseLLMProvider):
             "stream": True,
         }
         if tools:
-            call_kwargs["tools"] = [self._convert_tool(t) for t in tools]
+            call_kwargs["tools"] = [convert_tool(t) for t in tools]
         if kwargs.get("temperature") is not None:
             call_kwargs["temperature"] = kwargs["temperature"]
         if kwargs.get("stop"):
@@ -202,188 +185,32 @@ class LiteLLMProvider(BaseLLMProvider):
         try:
             stream = await litellm.acompletion(**call_kwargs)
             async for raw_chunk in stream:
-                chunk = self._parse_stream_chunk(raw_chunk)
+                chunk = parse_stream_chunk(raw_chunk)
                 if chunk is not None:
                     yield chunk
         except Exception as exc:
             raise self._map_error(exc) from exc
 
     # ------------------------------------------------------------------
-    # Message conversion helpers
+    # Delegating helpers (keep the instance-method interface for
+    # subclasses and tests while reusing shared implementations)
     # ------------------------------------------------------------------
 
     def _convert_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
-        """Convert Anchor messages to OpenAI-compatible format used by LiteLLM.
-
-        LiteLLM mirrors the OpenAI Chat Completions wire format:
-        - System messages stay in the messages list
-        - Tool results use role='tool' with tool_call_id
-        - Assistant tool calls use JSON strings for arguments
-        """
-        converted: list[dict[str, Any]] = []
-
-        for msg in messages:
-            if msg.role == Role.SYSTEM:
-                converted.append({"role": "system", "content": msg.content or ""})
-                continue
-
-            if msg.role == Role.TOOL:
-                # Tool result → role='tool' with tool_call_id
-                if msg.tool_result is not None:
-                    converted.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": msg.tool_result.tool_call_id,
-                            "content": msg.tool_result.content,
-                        }
-                    )
-                continue
-
-            if msg.role == Role.ASSISTANT and msg.tool_calls:
-                # Assistant message with tool calls
-                litellm_msg: dict[str, Any] = {"role": "assistant"}
-                if msg.content:
-                    litellm_msg["content"] = msg.content
-                litellm_msg["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            # LiteLLM expects arguments as a JSON string
-                            "arguments": json.dumps(tc.arguments),
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ]
-                converted.append(litellm_msg)
-                continue
-
-            # Regular user / assistant messages
-            role_str = "user" if msg.role == Role.USER else "assistant"
-            if isinstance(msg.content, str):
-                converted.append({"role": role_str, "content": msg.content})
-            elif isinstance(msg.content, list):
-                blocks: list[dict[str, Any]] = []
-                for block in msg.content:
-                    if block.type == "text" and block.text is not None:
-                        blocks.append({"type": "text", "text": block.text})
-                    elif block.type == "image_url" and block.image_url is not None:
-                        blocks.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": block.image_url},
-                            }
-                        )
-                    elif block.type == "image_base64" and block.image_base64 is not None:
-                        media_type = block.media_type or "image/png"
-                        blocks.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{media_type};base64,{block.image_base64}"
-                                },
-                            }
-                        )
-                converted.append({"role": role_str, "content": blocks})
-
-        return converted
-
-    # ------------------------------------------------------------------
-    # Tool schema conversion
-    # ------------------------------------------------------------------
+        """Convert Anchor messages to OpenAI-compatible format used by LiteLLM."""
+        return convert_messages(messages)
 
     def _convert_tool(self, tool: ToolSchema) -> dict[str, Any]:
-        """Convert a ToolSchema to OpenAI-compatible tool definition format.
-
-        LiteLLM uses the same OpenAI format with 'parameters' (not 'input_schema').
-        """
-        return {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.input_schema,
-            },
-        }
-
-    # ------------------------------------------------------------------
-    # Response parsing
-    # ------------------------------------------------------------------
+        """Convert a ToolSchema to OpenAI-compatible tool definition format."""
+        return convert_tool(tool)
 
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse a LiteLLM response (OpenAI-compatible) into an LLMResponse."""
-        choice = response.choices[0]
-        message = choice.message
-
-        content = message.content if message.content else None
-
-        tool_calls: list[ToolCall] = []
-        if message.tool_calls:
-            for tc in message.tool_calls:
-                # arguments comes as a JSON string from LiteLLM
-                try:
-                    arguments = json.loads(tc.function.arguments)
-                except (json.JSONDecodeError, TypeError):
-                    arguments = {}
-                tool_calls.append(
-                    ToolCall(
-                        id=tc.id,
-                        name=tc.function.name,
-                        arguments=arguments,
-                    )
-                )
-
-        usage = Usage(
-            prompt_tokens=response.usage.prompt_tokens,
-            completion_tokens=response.usage.completion_tokens,
-            total_tokens=response.usage.total_tokens,
-        )
-
-        return LLMResponse(
-            content=content,
-            tool_calls=tool_calls if tool_calls else None,
-            usage=usage,
-            model=response.model,
-            provider=self.provider_name,
-            stop_reason=_map_stop_reason(choice.finish_reason),
-        )
-
-    # ------------------------------------------------------------------
-    # Stream chunk parsing
-    # ------------------------------------------------------------------
+        return parse_response(response, self.provider_name)
 
     def _parse_stream_chunk(self, chunk: Any) -> StreamChunk | None:
         """Parse a single LiteLLM stream chunk into a StreamChunk, or None."""
-        if not chunk.choices:
-            return None
-
-        choice = chunk.choices[0]
-        delta = choice.delta
-        finish_reason = choice.finish_reason
-
-        # Handle finish reason first
-        if finish_reason is not None:
-            return StreamChunk(stop_reason=_map_stop_reason(finish_reason))
-
-        # Handle tool call deltas
-        if delta.tool_calls:
-            tc_delta = delta.tool_calls[0]
-            func_delta = tc_delta.function
-            return StreamChunk(
-                tool_call_delta=ToolCallDelta(
-                    index=tc_delta.index,
-                    id=tc_delta.id if tc_delta.id else None,
-                    name=func_delta.name if func_delta.name else None,
-                    arguments_fragment=func_delta.arguments if func_delta.arguments else None,
-                )
-            )
-
-        # Handle text content
-        if delta.content is not None:
-            return StreamChunk(content=delta.content)
-
-        return None
+        return parse_stream_chunk(chunk)
 
     # ------------------------------------------------------------------
     # Error mapping
