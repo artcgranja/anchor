@@ -88,6 +88,24 @@ class GeminiProvider(BaseLLMProvider):
 
     provider_name = "gemini"
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._client: Any = None
+
+    # ------------------------------------------------------------------
+    # Client caching
+    # ------------------------------------------------------------------
+
+    def _get_client(self) -> Any:
+        """Return a cached Gemini client, creating it on first use.
+
+        Gemini uses a single Client for both sync and async (via client.aio).
+        """
+        if self._client is None:
+            sdk = _ensure_sdk()
+            self._client = sdk.Client(api_key=self._api_key)
+        return self._client
+
     # ------------------------------------------------------------------
     # BaseLLMProvider abstract method implementations
     # ------------------------------------------------------------------
@@ -101,11 +119,10 @@ class GeminiProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> LLMResponse:
-        sdk = _ensure_sdk()
-        client = sdk.Client(api_key=self._api_key)
+        client = self._get_client()
         system, converted = self._extract_system_and_convert(messages)
 
-        config = self._build_config(sdk, system, tools, **kwargs)
+        config = self._build_config(_ensure_sdk(), system, tools, **kwargs)
 
         call_kwargs: dict[str, Any] = {
             "model": self._model,
@@ -126,11 +143,10 @@ class GeminiProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
-        sdk = _ensure_sdk()
-        client = sdk.Client(api_key=self._api_key)
+        client = self._get_client()
         system, converted = self._extract_system_and_convert(messages)
 
-        config = self._build_config(sdk, system, tools, **kwargs)
+        config = self._build_config(_ensure_sdk(), system, tools, **kwargs)
 
         call_kwargs: dict[str, Any] = {
             "model": self._model,
@@ -153,11 +169,10 @@ class GeminiProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> LLMResponse:
-        sdk = _ensure_sdk()
-        client = sdk.Client(api_key=self._api_key)
+        client = self._get_client()
         system, converted = self._extract_system_and_convert(messages)
 
-        config = self._build_config(sdk, system, tools, **kwargs)
+        config = self._build_config(_ensure_sdk(), system, tools, **kwargs)
 
         call_kwargs: dict[str, Any] = {
             "model": self._model,
@@ -178,11 +193,10 @@ class GeminiProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
-        sdk = _ensure_sdk()
-        client = sdk.Client(api_key=self._api_key)
+        client = self._get_client()
         system, converted = self._extract_system_and_convert(messages)
 
-        config = self._build_config(sdk, system, tools, **kwargs)
+        config = self._build_config(_ensure_sdk(), system, tools, **kwargs)
 
         call_kwargs: dict[str, Any] = {
             "model": self._model,

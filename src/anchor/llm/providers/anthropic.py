@@ -10,9 +10,8 @@ when you actually try to use the provider).
 
 from __future__ import annotations
 
-import json
 import os
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator
+from typing import Any, AsyncIterator, Iterator
 
 from anchor.llm.base import BaseLLMProvider
 from anchor.llm.errors import (
@@ -79,6 +78,29 @@ class AnthropicProvider(BaseLLMProvider):
 
     provider_name = "anthropic"
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._client: Any = None
+        self._async_client: Any = None
+
+    # ------------------------------------------------------------------
+    # Client caching
+    # ------------------------------------------------------------------
+
+    def _get_client(self) -> Any:
+        """Return a cached sync Anthropic client, creating it on first use."""
+        if self._client is None:
+            sdk = _ensure_sdk()
+            self._client = sdk.Anthropic(api_key=self._api_key, base_url=self._base_url)
+        return self._client
+
+    def _get_async_client(self) -> Any:
+        """Return a cached async Anthropic client, creating it on first use."""
+        if self._async_client is None:
+            sdk = _ensure_sdk()
+            self._async_client = sdk.AsyncAnthropic(api_key=self._api_key, base_url=self._base_url)
+        return self._async_client
+
     # ------------------------------------------------------------------
     # BaseLLMProvider abstract method implementations
     # ------------------------------------------------------------------
@@ -92,8 +114,7 @@ class AnthropicProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> LLMResponse:
-        sdk = _ensure_sdk()
-        client = sdk.Anthropic(api_key=self._api_key, base_url=self._base_url)
+        client = self._get_client()
         system, converted = self._extract_system_and_convert(messages)
 
         call_kwargs: dict[str, Any] = {
@@ -123,8 +144,7 @@ class AnthropicProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
-        sdk = _ensure_sdk()
-        client = sdk.Anthropic(api_key=self._api_key, base_url=self._base_url)
+        client = self._get_client()
         system, converted = self._extract_system_and_convert(messages)
 
         call_kwargs: dict[str, Any] = {
@@ -156,8 +176,7 @@ class AnthropicProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> LLMResponse:
-        sdk = _ensure_sdk()
-        client = sdk.AsyncAnthropic(api_key=self._api_key, base_url=self._base_url)
+        client = self._get_async_client()
         system, converted = self._extract_system_and_convert(messages)
 
         call_kwargs: dict[str, Any] = {
@@ -187,8 +206,7 @@ class AnthropicProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
-        sdk = _ensure_sdk()
-        client = sdk.AsyncAnthropic(api_key=self._api_key, base_url=self._base_url)
+        client = self._get_async_client()
         system, converted = self._extract_system_and_convert(messages)
 
         call_kwargs: dict[str, Any] = {

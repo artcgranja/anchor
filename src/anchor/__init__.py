@@ -363,7 +363,7 @@ from anchor.llm import (
     calculate_cost,
     create_provider,
     register_provider,
-)
+)  # Note: Role is intentionally NOT imported here — it comes from anchor.models above
 
 try:
     __version__ = version("astro-anchor")

@@ -6,7 +6,7 @@ Provider adapters convert these to/from provider-specific formats.
 
 from __future__ import annotations
 
-from enum import Enum, StrEnum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel
@@ -75,7 +75,7 @@ class Usage(BaseModel, frozen=True):
     total_cost: float | None = None
 
 
-class StopReason(str, Enum):
+class StopReason(StrEnum):
     """Why the model stopped generating."""
 
     STOP = "stop"

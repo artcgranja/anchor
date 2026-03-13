@@ -106,15 +106,17 @@ class FallbackProvider:
             try:
                 stream_iter = provider.astream(messages, tools=tools, **kwargs)
                 first_chunk = await stream_iter.__anext__()
-                yield first_chunk
-                async for chunk in stream_iter:
-                    yield chunk
-                return
             except StopAsyncIteration:
                 return
             except ProviderError as e:
                 if not e.is_transient:
                     raise
                 last_error = e
+                continue
+            # Committed to this provider — errors from here propagate directly
+            yield first_chunk
+            async for chunk in stream_iter:
+                yield chunk
+            return
         if last_error:
             raise last_error

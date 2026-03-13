@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator
+from typing import Any, AsyncIterator, Iterator
 
 from anchor.llm.base import BaseLLMProvider
 from anchor.llm.errors import (
@@ -89,6 +89,29 @@ class OpenAIProvider(BaseLLMProvider):
 
     provider_name = "openai"
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._client: Any = None
+        self._async_client: Any = None
+
+    # ------------------------------------------------------------------
+    # Client caching
+    # ------------------------------------------------------------------
+
+    def _get_client(self) -> Any:
+        """Return a cached sync OpenAI client, creating it on first use."""
+        if self._client is None:
+            sdk = _ensure_sdk()
+            self._client = sdk.OpenAI(api_key=self._api_key, base_url=self._base_url)
+        return self._client
+
+    def _get_async_client(self) -> Any:
+        """Return a cached async OpenAI client, creating it on first use."""
+        if self._async_client is None:
+            sdk = _ensure_sdk()
+            self._async_client = sdk.AsyncOpenAI(api_key=self._api_key, base_url=self._base_url)
+        return self._async_client
+
     # ------------------------------------------------------------------
     # BaseLLMProvider abstract method implementations
     # ------------------------------------------------------------------
@@ -102,8 +125,7 @@ class OpenAIProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> LLMResponse:
-        sdk = _ensure_sdk()
-        client = sdk.OpenAI(api_key=self._api_key, base_url=self._base_url)
+        client = self._get_client()
         converted = self._convert_messages(messages)
 
         call_kwargs: dict[str, Any] = {
@@ -131,8 +153,7 @@ class OpenAIProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> Iterator[StreamChunk]:
-        sdk = _ensure_sdk()
-        client = sdk.OpenAI(api_key=self._api_key, base_url=self._base_url)
+        client = self._get_client()
         converted = self._convert_messages(messages)
 
         call_kwargs: dict[str, Any] = {
@@ -163,8 +184,7 @@ class OpenAIProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> LLMResponse:
-        sdk = _ensure_sdk()
-        client = sdk.AsyncOpenAI(api_key=self._api_key, base_url=self._base_url)
+        client = self._get_async_client()
         converted = self._convert_messages(messages)
 
         call_kwargs: dict[str, Any] = {
@@ -192,8 +212,7 @@ class OpenAIProvider(BaseLLMProvider):
         tools: list[ToolSchema] | None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamChunk]:
-        sdk = _ensure_sdk()
-        client = sdk.AsyncOpenAI(api_key=self._api_key, base_url=self._base_url)
+        client = self._get_async_client()
         converted = self._convert_messages(messages)
 
         call_kwargs: dict[str, Any] = {
