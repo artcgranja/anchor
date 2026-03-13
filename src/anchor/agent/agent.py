@@ -77,6 +77,9 @@ class Agent:
         "_llm",
         "_max_response_tokens",
         "_max_rounds",
+        "_mcp_configs",
+        "_mcp_pool",
+        "_mcp_tools",
         "_memory",
         "_pipeline",
         "_skill_registry",
@@ -108,6 +111,9 @@ class Agent:
         self._last_result: ContextResult | None = None
         self._skill_registry = SkillRegistry()
         self._activate_tool: AgentTool | None = None
+        self._mcp_configs: list[Any] = []  # MCPServerConfig instances
+        self._mcp_pool: Any = None  # MCPClientPool (lazy)
+        self._mcp_tools: list[AgentTool] = []
 
         tokenizer = _WhitespaceTokenizer()
         self._pipeline = ContextPipeline(max_tokens=max_tokens, tokenizer=tokenizer)
@@ -152,6 +158,24 @@ class Agent:
         self._ensure_activate_tool()
         return self
 
+    def with_mcp_servers(
+        self,
+        servers: list[str | Any],
+    ) -> Agent:
+        """Connect to external MCP servers. Returns self for chaining.
+
+        Accepts MCPServerConfig objects or convenience strings
+        (URLs for HTTP, commands for STDIO).
+        """
+        from anchor.mcp.tools import parse_server_string
+
+        for server in servers:
+            if isinstance(server, str):
+                self._mcp_configs.append(parse_server_string(server))
+            else:
+                self._mcp_configs.append(server)
+        return self
+
     def with_skill_from_path(self, path: str | Path) -> Agent:
         """Load one SKILL.md skill from a directory. Returns self for chaining."""
         self._skill_registry.load_from_path(Path(path))
@@ -183,6 +207,7 @@ class Agent:
         tools.extend(self._skill_registry.active_tools())
         if self._activate_tool is not None:
             tools.append(self._activate_tool)
+        tools.extend(self._mcp_tools)
         return tools
 
     def _ensure_activate_tool(self) -> None:
@@ -210,6 +235,44 @@ class Agent:
                     logger.exception("Tool '%s' failed", name)
                     return f"Error: tool '{name}' failed."
         return f"Unknown tool: {name}"
+
+    async def _aexecute_tool(self, name: str, tool_input: dict[str, Any]) -> str:
+        """Async tool execution — supports both regular and MCP tools."""
+        for tool in self._all_active_tools():
+            if tool.name == name:
+                # Check if this is an MCP tool with async caller
+                async_caller = getattr(tool, "_mcp_async_caller", None)
+                if async_caller is not None:
+                    original_name = getattr(tool, "_mcp_original_name", name)
+                    # Validate input before calling MCP tool
+                    valid, err = tool.validate_input(tool_input)
+                    if not valid:
+                        return f"Error: invalid input for tool '{name}': {err}"
+                    try:
+                        return await async_caller(original_name, tool_input)
+                    except Exception as exc:
+                        logger.exception("MCP tool '%s' failed", name)
+                        return f"Error: MCP tool '{name}' failed: {exc}"
+
+                # Regular tool — run sync
+                valid, err = tool.validate_input(tool_input)
+                if not valid:
+                    return f"Error: invalid input for tool '{name}': {err}"
+                try:
+                    return tool.fn(**tool_input)
+                except Exception:
+                    logger.exception("Tool '%s' failed", name)
+                    return f"Error: tool '{name}' failed."
+        return f"Unknown tool: {name}"
+
+    async def _arun_tools(self, tool_calls: list[ToolCall]) -> list[ToolResult]:
+        """Execute tool calls asynchronously."""
+        results: list[ToolResult] = []
+        for tc in tool_calls:
+            result_text = await self._aexecute_tool(tc.name, tc.arguments)
+            self._record_tool_call(tc.name, tc.arguments, result_text)
+            results.append(ToolResult(tool_call_id=tc.id, content=result_text))
+        return results
 
     def _run_tools(self, tool_calls: list[ToolCall]) -> list[ToolResult]:
         """Execute tool calls and return ToolResult objects."""
@@ -299,6 +362,12 @@ class Agent:
 
         Yields text chunks as they arrive from the API.
         """
+        if self._mcp_configs:
+            msg = (
+                "MCP servers require async execution. "
+                "Use agent.achat() instead of agent.chat()."
+            )
+            raise TypeError(msg)
         if self._memory is not None:
             self._memory.add_user_message(message)
 
@@ -398,6 +467,18 @@ class Agent:
         if self._memory is not None:
             self._memory.add_user_message(message)
 
+        # Lazy MCP connection
+        if self._mcp_configs and self._mcp_pool is None:
+            from anchor.mcp.client import MCPClientPool
+            pool = MCPClientPool(self._mcp_configs)
+            try:
+                await pool.connect_all()
+                self._mcp_tools = await pool.all_agent_tools()
+                self._mcp_pool = pool
+            except Exception:
+                await pool.disconnect_all()
+                raise
+
         ctx_result = await self._pipeline.abuild(message)
         self._last_result = ctx_result
         formatted = ctx_result.formatted_output
@@ -476,9 +557,27 @@ class Agent:
             ))
 
             # Execute tools and add results
-            tool_results = self._run_tools(tool_calls)
+            tool_results = await self._arun_tools(tool_calls)
             for result in tool_results:
                 messages.append(Message(role=Role.TOOL, tool_result=result))
 
         if self._memory is not None and final_text:
             self._memory.add_assistant_message(final_text)
+
+    async def aclose(self) -> None:
+        """Clean up MCP connections and other async resources."""
+        if self._mcp_pool is not None:
+            await self._mcp_pool.disconnect_all()
+            self._mcp_pool = None
+            self._mcp_tools = []
+
+    async def __aenter__(self) -> Agent:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        await self.aclose()
