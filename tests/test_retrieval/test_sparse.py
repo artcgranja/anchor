@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from anchor.exceptions import RetrieverError
+pytest.importorskip("rank_bm25", reason="rank-bm25 required for SparseRetriever tests")
+
+from anchor.exceptions import RetrieverError  # noqa: E402
 from anchor.models.context import ContextItem, SourceType
 from anchor.models.query import QueryBundle
 from tests.test_retrieval.conftest import make_sparse_retriever

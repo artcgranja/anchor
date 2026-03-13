@@ -31,6 +31,12 @@ flashrank = ["flashrank>=0.2,<1"]
 cli = ["typer>=0.12,<1", "rich>=13,<14"]
 anthropic = ["anthropic>=0.40,<1"]
 agents = ["anthropic>=0.40,<1"]
+all-providers = ["astro-anchor[anthropic,openai,gemini,grok,ollama,litellm]"]
+gemini = ["google-genai>=1.0.0"]
+grok = ["openai>=1.50.0"]
+litellm = ["litellm>=1.50.0"]
+ollama = ["openai>=1.50.0"]
+openai = ["openai>=1.50.0"]
 pdf = ["pypdf>=4,<5"]
 otlp = [
     "opentelemetry-exporter-otlp-proto-http>=1.20,<2",
@@ -42,7 +48,7 @@ docs = [
     "mkdocs-minify-plugin>=0.8,<1",
     "mkdocstrings[python]>=0.25,<1",
 ]
-all = ["astro-anchor[bm25,cli,anthropic,tiktoken,agents,pdf,flashrank,otlp]"]
+all = ["astro-anchor[bm25,cli,anthropic,gemini,grok,litellm,ollama,openai,tiktoken,agents,pdf,flashrank,otlp]"]
 
 [project.scripts]
 anchor = "anchor.cli:app"
@@ -106,6 +112,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "opentelemetry.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["anthropic.*", "openai.*", "google.genai.*", "litellm.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

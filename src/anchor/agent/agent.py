@@ -1,15 +1,25 @@
-"""Agent class that wraps ContextPipeline + Anthropic SDK + tool loop."""
+"""Agent class that wraps ContextPipeline + LLMProvider + tool loop."""
 
 from __future__ import annotations
 
 import json
 import logging
-import time
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
 from anchor.formatters.anthropic import AnthropicFormatter
+from anchor.llm.base import LLMProvider
+from anchor.llm.models import (
+    Message,
+    Role,
+    StopReason,
+    StreamChunk,
+    ToolCall,
+    ToolCallDelta,
+    ToolResult,
+)
+from anchor.llm.registry import create_provider
 from anchor.memory.manager import MemoryManager
 from anchor.models.context import ContextResult
 from anchor.pipeline.pipeline import ContextPipeline
@@ -43,7 +53,7 @@ class _WhitespaceTokenizer:
 
 
 class Agent:
-    """High-level agent combining context pipeline with Anthropic's API.
+    """High-level agent combining context pipeline with an LLM provider.
 
     Provides streaming chat with automatic tool use, memory management,
     and agentic RAG -- all powered by the anchor pipeline.
@@ -63,13 +73,11 @@ class Agent:
 
     __slots__ = (
         "_activate_tool",
-        "_client",
         "_last_result",
+        "_llm",
         "_max_response_tokens",
-        "_max_retries",
         "_max_rounds",
         "_memory",
-        "_model",
         "_pipeline",
         "_skill_registry",
         "_system_prompt",
@@ -78,32 +86,22 @@ class Agent:
 
     def __init__(
         self,
-        model: str,
+        model: str = "claude-haiku-4-5-20251001",
         *,
         api_key: str | None = None,
-        client: Any = None,
+        llm: LLMProvider | None = None,
+        fallbacks: list[str] | None = None,
         max_tokens: int = 16384,
         max_response_tokens: int = 1024,
         max_rounds: int = 10,
-        max_retries: int = 3,
     ) -> None:
-        if client is not None:
-            self._client: Any = client
+        if llm is not None:
+            self._llm: LLMProvider = llm
         else:
-            try:
-                import anthropic
-            except ImportError:
-                msg = (
-                    "anthropic is required for Agent. "
-                    "Install with: pip install anchor[anthropic]"
-                )
-                raise ImportError(msg) from None
-            self._client = anthropic.Anthropic(api_key=api_key)
+            self._llm = create_provider(model, api_key=api_key, fallbacks=fallbacks)
 
-        self._model = model
         self._max_response_tokens = max_response_tokens
         self._max_rounds = max_rounds
-        self._max_retries = max_retries
         self._system_prompt = ""
         self._tools: list[AgentTool] = []
         self._memory: MemoryManager | None = None
@@ -213,34 +211,13 @@ class Agent:
                     return f"Error: tool '{name}' failed."
         return f"Unknown tool: {name}"
 
-    @staticmethod
-    def _serialize_response(content: list[Any]) -> list[dict[str, Any]]:
-        """Serialize response content blocks to dicts for the next request."""
-        blocks: list[dict[str, Any]] = []
-        for block in content:
-            if block.type == "text":
-                blocks.append({"type": "text", "text": block.text})
-            elif block.type == "tool_use":
-                blocks.append({
-                    "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
-                })
-        return blocks
-
-    def _run_tools(self, content: list[Any]) -> list[dict[str, Any]]:
-        """Execute all tool_use blocks and return tool_result dicts."""
-        results: list[dict[str, Any]] = []
-        for block in content:
-            if block.type == "tool_use":
-                result_text = self._execute_tool(block.name, block.input)
-                self._record_tool_call(block.name, block.input, result_text)
-                results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result_text,
-                })
+    def _run_tools(self, tool_calls: list[ToolCall]) -> list[ToolResult]:
+        """Execute tool calls and return ToolResult objects."""
+        results: list[ToolResult] = []
+        for tc in tool_calls:
+            result_text = self._execute_tool(tc.name, tc.arguments)
+            self._record_tool_call(tc.name, tc.arguments, result_text)
+            results.append(ToolResult(tool_call_id=tc.id, content=result_text))
         return results
 
     def _record_tool_call(
@@ -256,69 +233,60 @@ class Agent:
             self._memory.add_tool_message(tool_summary)
 
     @staticmethod
-    def _retryable_errors() -> tuple[type[Exception], ...]:
-        """Return the tuple of retryable Anthropic exception types.
+    def _build_tool_calls(
+        accumulators: dict[int, dict[str, Any]],
+    ) -> list[ToolCall]:
+        """Convert accumulated tool call deltas into ToolCall objects."""
+        calls: list[ToolCall] = []
+        for _idx in sorted(accumulators):
+            acc = accumulators[_idx]
+            args = json.loads(acc["args_json"]) if acc["args_json"] else {}
+            calls.append(ToolCall(id=acc["id"], name=acc["name"], arguments=args))
+        return calls
 
-        Returns an empty tuple when the ``anthropic`` package is not installed,
-        which means the retry loop will never catch anything (correct behaviour
-        for test environments that use a fake client).
+    def _formatted_to_messages(
+        self, formatted: dict[str, Any],
+    ) -> tuple[list[Message], str | None]:
+        """Convert pipeline formatted output to list[Message].
+
+        Returns (messages, system_text) where system_text is extracted
+        for providers that handle system messages separately.
         """
-        try:
-            import anthropic as _anthropic
-        except ImportError:
-            return ()
-        return (
-            _anthropic.RateLimitError,
-            _anthropic.APIConnectionError,
-            _anthropic.APITimeoutError,
-        )
+        messages: list[Message] = []
+        system_text: str | None = None
 
-    def _call_api_with_retry(self, **kwargs: Any) -> Any:
-        """Call the streaming API with exponential backoff on transient errors.
+        # Handle Anthropic format (system is separate)
+        if "system" in formatted:
+            system_parts = formatted["system"]
+            if isinstance(system_parts, list):
+                texts = [b["text"] for b in system_parts if b.get("text")]
+                if texts:
+                    system_text = " ".join(texts)
+            elif isinstance(system_parts, str):
+                system_text = system_parts
 
-        Retries on ``RateLimitError``, ``APIConnectionError``, and
-        ``APITimeoutError`` up to ``self._max_retries`` times with
-        exponential backoff (1s, 2s, 4s, ...).
-        """
-        retryable = self._retryable_errors()
-        last_exc: Exception | None = None
-        for attempt in range(self._max_retries):
-            try:
-                return self._client.messages.stream(**kwargs)
-            except retryable as exc:
-                last_exc = exc
-                delay = 2**attempt  # 1, 2, 4, ...
-                logger.warning(
-                    "API call failed (attempt %d/%d): %s. Retrying in %ds...",
-                    attempt + 1, self._max_retries, exc, delay,
-                )
-                time.sleep(delay)
-        if last_exc is not None:
-            raise last_exc
-        msg = "max_retries must be >= 1"
-        raise ValueError(msg)
+        for msg in formatted.get("messages", []):
+            role_str = msg.get("role", "user")
+            content = msg.get("content")
 
-    async def _call_api_with_retry_async(self, **kwargs: Any) -> Any:
-        """Async variant of ``_call_api_with_retry``."""
-        import asyncio
+            if isinstance(content, str):
+                messages.append(Message(role=Role(role_str), content=content))
+            elif isinstance(content, list):
+                # Content blocks (from tool_use / tool_result responses)
+                # These should not appear in the initial pipeline output,
+                # but handle for completeness.
+                text_parts = []
+                for block in content:
+                    if block.get("type") == "text":
+                        text_parts.append(block["text"])
+                if text_parts:
+                    messages.append(
+                        Message(role=Role(role_str), content=" ".join(text_parts)),
+                    )
+            elif content is None:
+                messages.append(Message(role=Role(role_str)))
 
-        retryable = self._retryable_errors()
-        last_exc: Exception | None = None
-        for attempt in range(self._max_retries):
-            try:
-                return self._client.messages.stream(**kwargs)
-            except retryable as exc:
-                last_exc = exc
-                delay = 2**attempt
-                logger.warning(
-                    "Async API call failed (attempt %d/%d): %s. Retrying in %ds...",
-                    attempt + 1, self._max_retries, exc, delay,
-                )
-                await asyncio.sleep(delay)
-        if last_exc is not None:
-            raise last_exc
-        msg = "max_retries must be >= 1"
-        raise ValueError(msg)
+        return messages, system_text
 
     # -- Chat --
 
@@ -338,50 +306,83 @@ class Agent:
         self._last_result = ctx_result
         formatted = ctx_result.formatted_output
         if not isinstance(formatted, dict):
-            msg = "Agent requires AnthropicFormatter (dict output), got str"
+            msg = "Agent requires a dict-based formatter output"
             raise TypeError(msg)
 
-        system: Any = formatted["system"]
-        messages: list[Any] = list(formatted["messages"])
+        base_messages, base_system = self._formatted_to_messages(formatted)
+
+        # Working message list for the tool loop
+        messages: list[Message] = list(base_messages)
 
         final_text = ""
 
         for _round in range(self._max_rounds):
             # Per-round tool recomputation (skills may be activated mid-convo)
             all_tools = self._all_active_tools()
-            tools_param = (
-                [t.to_anthropic_schema() for t in all_tools] if all_tools else None
+            tool_schemas = (
+                [t.to_tool_schema() for t in all_tools] if all_tools else None
             )
 
             # Append skill discovery prompt to system message
             discovery = self._skill_registry.skill_discovery_prompt()
-            round_system = system
+            round_system = base_system
             if discovery:
-                round_system = [*system, {"type": "text", "text": discovery}]
+                if round_system:
+                    round_system = round_system + " " + discovery
+                else:
+                    round_system = discovery
 
-            kwargs: dict[str, Any] = {
-                "model": self._model,
-                "max_tokens": self._max_response_tokens,
-                "system": round_system,
-                "messages": messages,
-            }
-            if tools_param:
-                kwargs["tools"] = tools_param
+            # Build messages with system message prepended
+            llm_messages: list[Message] = []
+            if round_system:
+                llm_messages.append(Message(role=Role.SYSTEM, content=round_system))
+            llm_messages.extend(messages)
 
-            with self._call_api_with_retry(**kwargs) as stream:
-                for text in stream.text_stream:
-                    final_text += text
-                    yield text
-                response = stream.get_final_message()
+            # Stream from provider
+            accumulated_text = ""
+            tool_call_accumulators: dict[int, dict[str, Any]] = {}
+            stop_reason: StopReason | None = None
 
-            if response.stop_reason != "tool_use":
+            for chunk in self._llm.stream(
+                llm_messages,
+                tools=tool_schemas,
+                max_tokens=self._max_response_tokens,
+            ):
+                if chunk.content:
+                    accumulated_text += chunk.content
+                    final_text += chunk.content
+                    yield chunk.content
+                if chunk.tool_call_delta:
+                    delta = chunk.tool_call_delta
+                    acc = tool_call_accumulators.setdefault(
+                        delta.index, {"id": None, "name": None, "args_json": ""},
+                    )
+                    if delta.id:
+                        acc["id"] = delta.id
+                    if delta.name:
+                        acc["name"] = delta.name
+                    if delta.arguments_fragment:
+                        acc["args_json"] += delta.arguments_fragment
+                if chunk.stop_reason:
+                    stop_reason = chunk.stop_reason
+
+            if stop_reason != StopReason.TOOL_USE:
                 break
 
-            messages.append({
-                "role": "assistant",
-                "content": self._serialize_response(response.content),
-            })
-            messages.append({"role": "user", "content": self._run_tools(response.content)})
+            # Build tool calls from accumulated deltas
+            tool_calls = self._build_tool_calls(tool_call_accumulators)
+
+            # Add assistant message with tool calls to conversation
+            messages.append(Message(
+                role=Role.ASSISTANT,
+                content=accumulated_text or None,
+                tool_calls=tool_calls,
+            ))
+
+            # Execute tools and add results
+            tool_results = self._run_tools(tool_calls)
+            for result in tool_results:
+                messages.append(Message(role=Role.TOOL, tool_result=result))
 
         if self._memory is not None and final_text:
             self._memory.add_assistant_message(final_text)
@@ -401,51 +402,83 @@ class Agent:
         self._last_result = ctx_result
         formatted = ctx_result.formatted_output
         if not isinstance(formatted, dict):
-            msg = "Agent requires AnthropicFormatter (dict output), got str"
+            msg = "Agent requires a dict-based formatter output"
             raise TypeError(msg)
 
-        system: Any = formatted["system"]
-        messages: list[Any] = list(formatted["messages"])
+        base_messages, base_system = self._formatted_to_messages(formatted)
+
+        # Working message list for the tool loop
+        messages: list[Message] = list(base_messages)
 
         final_text = ""
 
         for _round in range(self._max_rounds):
             # Per-round tool recomputation (skills may be activated mid-convo)
             all_tools = self._all_active_tools()
-            tools_param = (
-                [t.to_anthropic_schema() for t in all_tools] if all_tools else None
+            tool_schemas = (
+                [t.to_tool_schema() for t in all_tools] if all_tools else None
             )
 
             # Append skill discovery prompt to system message
             discovery = self._skill_registry.skill_discovery_prompt()
-            round_system = system
+            round_system = base_system
             if discovery:
-                round_system = [*system, {"type": "text", "text": discovery}]
+                if round_system:
+                    round_system = round_system + " " + discovery
+                else:
+                    round_system = discovery
 
-            kwargs: dict[str, Any] = {
-                "model": self._model,
-                "max_tokens": self._max_response_tokens,
-                "system": round_system,
-                "messages": messages,
-            }
-            if tools_param:
-                kwargs["tools"] = tools_param
+            # Build messages with system message prepended
+            llm_messages: list[Message] = []
+            if round_system:
+                llm_messages.append(Message(role=Role.SYSTEM, content=round_system))
+            llm_messages.extend(messages)
 
-            stream_ctx = await self._call_api_with_retry_async(**kwargs)
-            async with stream_ctx as stream:
-                async for text in stream.text_stream:
-                    final_text += text
-                    yield text
-                response = stream.get_final_message()
+            # Stream from provider
+            accumulated_text = ""
+            tool_call_accumulators: dict[int, dict[str, Any]] = {}
+            stop_reason: StopReason | None = None
 
-            if response.stop_reason != "tool_use":
+            async for chunk in self._llm.astream(
+                llm_messages,
+                tools=tool_schemas,
+                max_tokens=self._max_response_tokens,
+            ):
+                if chunk.content:
+                    accumulated_text += chunk.content
+                    final_text += chunk.content
+                    yield chunk.content
+                if chunk.tool_call_delta:
+                    delta = chunk.tool_call_delta
+                    acc = tool_call_accumulators.setdefault(
+                        delta.index, {"id": None, "name": None, "args_json": ""},
+                    )
+                    if delta.id:
+                        acc["id"] = delta.id
+                    if delta.name:
+                        acc["name"] = delta.name
+                    if delta.arguments_fragment:
+                        acc["args_json"] += delta.arguments_fragment
+                if chunk.stop_reason:
+                    stop_reason = chunk.stop_reason
+
+            if stop_reason != StopReason.TOOL_USE:
                 break
 
-            messages.append({
-                "role": "assistant",
-                "content": self._serialize_response(response.content),
-            })
-            messages.append({"role": "user", "content": self._run_tools(response.content)})
+            # Build tool calls from accumulated deltas
+            tool_calls = self._build_tool_calls(tool_call_accumulators)
+
+            # Add assistant message with tool calls to conversation
+            messages.append(Message(
+                role=Role.ASSISTANT,
+                content=accumulated_text or None,
+                tool_calls=tool_calls,
+            ))
+
+            # Execute tools and add results
+            tool_results = self._run_tools(tool_calls)
+            for result in tool_results:
+                messages.append(Message(role=Role.TOOL, tool_result=result))
 
         if self._memory is not None and final_text:
             self._memory.add_assistant_message(final_text)
