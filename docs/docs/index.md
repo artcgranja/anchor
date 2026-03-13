@@ -24,9 +24,10 @@ and system prompts into a single, token-aware pipeline.
 [Get Started :material-arrow-right:](getting-started/index.md){ .md-button .md-button--primary }
 [View on GitHub :material-github:](https://github.com/artcgranja/anchor){ .md-button }
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-6B8E6B)](https://www.python.org/)
+[![PyPI](https://img.shields.io/pypi/v/astro-anchor?color=3b82f6)](https://pypi.org/project/astro-anchor/)
+[![Downloads](https://img.shields.io/pypi/dm/astro-anchor?color=64748b)](https://pypi.org/project/astro-anchor/)
+[![Python](https://img.shields.io/pypi/pyversions/astro-anchor?color=6B8E6B)](https://pypi.org/project/astro-anchor/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-64748b)](https://github.com/artcgranja/anchor/blob/main/LICENSE)
-[![Tests](https://img.shields.io/github/actions/workflow/status/artcgranja/anchor/ci.yml?label=CI&color=3b82f6)](https://github.com/artcgranja/anchor/actions)
 
 </div>
 

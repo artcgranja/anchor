@@ -19,10 +19,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/artcgranja/anchor"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-6B8E6B?style=flat-square" alt="Python"></a>
+  <a href="https://pypi.org/project/astro-anchor/"><img src="https://img.shields.io/pypi/v/astro-anchor?color=3b82f6&style=flat-square" alt="PyPI"></a>
+  <a href="https://pypi.org/project/astro-anchor/"><img src="https://img.shields.io/pypi/dm/astro-anchor?color=64748b&style=flat-square" alt="Downloads"></a>
+  <a href="https://pypi.org/project/astro-anchor/"><img src="https://img.shields.io/pypi/pyversions/astro-anchor?color=6B8E6B&style=flat-square" alt="Python"></a>
   <a href="https://github.com/artcgranja/anchor/blob/main/LICENSE"><img src="https://img.shields.io/github/license/artcgranja/anchor?color=64748b&style=flat-square" alt="License"></a>
   <a href="https://github.com/artcgranja/anchor"><img src="https://img.shields.io/github/stars/artcgranja/anchor?style=flat-square&color=3b82f6" alt="Stars"></a>
-  <a href="https://github.com/artcgranja/anchor/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/artcgranja/anchor/ci.yml?style=flat-square&label=CI" alt="CI"></a>
 </p>
 
 ---
