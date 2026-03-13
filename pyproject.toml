@@ -1,6 +1,6 @@
 [project]
 name = "astro-anchor"
-version = "0.1.0"
+version = "0.1.1"
 description = "Context engineering toolkit for AI applications"
 readme = "README.md"
 license = "MIT"
@@ -38,6 +38,10 @@ litellm = ["litellm>=1.50.0"]
 ollama = ["openai>=1.50.0"]
 openai = ["openai>=1.50.0"]
 pdf = ["pypdf>=4,<5"]
+sqlite = ["aiosqlite>=0.20,<1"]
+postgres = ["asyncpg>=0.29,<1"]
+redis = ["redis>=5.0,<8"]
+all-storage = ["astro-anchor[sqlite,postgres,redis]"]
 otlp = [
     "opentelemetry-exporter-otlp-proto-http>=1.20,<2",
     "opentelemetry-sdk>=1.20,<2",
@@ -48,7 +52,7 @@ docs = [
     "mkdocs-minify-plugin>=0.8,<1",
     "mkdocstrings[python]>=0.25,<1",
 ]
-all = ["astro-anchor[bm25,cli,anthropic,gemini,grok,litellm,ollama,openai,tiktoken,agents,pdf,flashrank,otlp]"]
+all = ["astro-anchor[bm25,cli,anthropic,gemini,grok,litellm,ollama,openai,tiktoken,agents,pdf,flashrank,otlp,sqlite,postgres,redis]"]
 
 [project.scripts]
 anchor = "anchor.cli:app"
@@ -119,6 +123,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["anthropic.*", "openai.*", "google.genai.*", "litellm.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["aiosqlite.*", "asyncpg.*", "redis.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
