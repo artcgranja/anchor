@@ -57,3 +57,24 @@ class TestTierConfig:
         config = TierConfig(level=0, max_tokens=4096)
         with pytest.raises(AttributeError):
             config.level = 1  # type: ignore[misc]
+
+
+from anchor.memory.callbacks import ProgressiveSummarizationCallback
+
+
+class TestProgressiveSummarizationCallback:
+    def test_protocol_exists(self) -> None:
+        assert hasattr(ProgressiveSummarizationCallback, 'on_tier_cascade')
+        assert hasattr(ProgressiveSummarizationCallback, 'on_facts_extracted')
+        assert hasattr(ProgressiveSummarizationCallback, 'on_compaction_error')
+
+    def test_satisfies_protocol(self) -> None:
+        class MyCallback:
+            def on_tier_cascade(self, from_tier, to_tier, tokens_in, tokens_out):
+                pass
+            def on_facts_extracted(self, facts, source_tier):
+                pass
+            def on_compaction_error(self, tier, error):
+                pass
+
+        assert isinstance(MyCallback(), ProgressiveSummarizationCallback)
