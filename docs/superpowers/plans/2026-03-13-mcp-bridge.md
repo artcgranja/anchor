@@ -1983,6 +1983,101 @@ class TestAgentWithMCPServers:
         agent.with_mcp_servers(["http://a.com"])
         agent.with_mcp_servers(["http://b.com"])
         assert len(agent._mcp_configs) == 2
+
+
+class TestAgentAsyncMCPExecution:
+    """Tests for _aexecute_tool() and _arun_tools() async paths."""
+
+    @pytest.mark.asyncio
+    async def test_aexecute_mcp_tool_uses_async_caller(self) -> None:
+        """MCP tools dispatch through _mcp_async_caller."""
+        from anchor.agent.models import AgentTool
+        from anchor.mcp.errors import MCPError
+
+        agent = Agent(model="claude-haiku-4-5-20251001")
+
+        # Create a mock MCP AgentTool with _mcp_async_caller
+        async_caller = AsyncMock(return_value="mcp result")
+
+        def sentinel(**_kwargs: Any) -> str:
+            raise MCPError("sync")
+
+        tool = AgentTool(
+            name="server_read",
+            description="Read",
+            input_schema={"type": "object", "properties": {}},
+            fn=sentinel,
+        )
+        object.__setattr__(tool, "_mcp_async_caller", async_caller)
+        object.__setattr__(tool, "_mcp_original_name", "read")
+
+        agent._mcp_tools = [tool]
+        result = await agent._aexecute_tool("server_read", {"path": "/tmp"})
+
+        assert result == "mcp result"
+        async_caller.assert_called_once_with("read", {"path": "/tmp"})
+
+    @pytest.mark.asyncio
+    async def test_aexecute_regular_tool_uses_sync_fn(self) -> None:
+        """Regular (non-MCP) tools use sync fn in _aexecute_tool."""
+        from anchor.agent.tool_decorator import tool
+
+        @tool
+        def greet(name: str) -> str:
+            """Greet someone."""
+            return f"Hello {name}"
+
+        agent = Agent(model="claude-haiku-4-5-20251001").with_tools([greet])
+        result = await agent._aexecute_tool("greet", {"name": "World"})
+        assert result == "Hello World"
+
+    @pytest.mark.asyncio
+    async def test_aexecute_mcp_tool_returns_error_on_failure(self) -> None:
+        """MCP tool failure returns error string, doesn't raise."""
+        from anchor.agent.models import AgentTool
+        from anchor.mcp.errors import MCPError
+
+        agent = Agent(model="claude-haiku-4-5-20251001")
+
+        async_caller = AsyncMock(side_effect=RuntimeError("boom"))
+
+        def sentinel(**_kwargs: Any) -> str:
+            raise MCPError("sync")
+
+        tool = AgentTool(
+            name="broken",
+            description="Broken tool",
+            input_schema={"type": "object", "properties": {}},
+            fn=sentinel,
+        )
+        object.__setattr__(tool, "_mcp_async_caller", async_caller)
+        object.__setattr__(tool, "_mcp_original_name", "broken")
+
+        agent._mcp_tools = [tool]
+        result = await agent._aexecute_tool("broken", {})
+        assert "Error" in result
+
+    @pytest.mark.asyncio
+    async def test_aexecute_unknown_tool_returns_unknown(self) -> None:
+        agent = Agent(model="claude-haiku-4-5-20251001")
+        result = await agent._aexecute_tool("nonexistent", {})
+        assert "Unknown tool" in result
+
+    @pytest.mark.asyncio
+    async def test_all_active_tools_includes_mcp(self) -> None:
+        """_all_active_tools() includes MCP tools."""
+        from anchor.agent.models import AgentTool
+
+        agent = Agent(model="claude-haiku-4-5-20251001")
+        mcp_tool = AgentTool(
+            name="mcp_tool",
+            description="MCP",
+            input_schema={"type": "object", "properties": {}},
+            fn=lambda: "",
+        )
+        agent._mcp_tools = [mcp_tool]
+        all_tools = agent._all_active_tools()
+        assert any(t.name == "mcp_tool" for t in all_tools)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1990,7 +2085,7 @@ class TestAgentWithMCPServers:
 Run: `cd /Users/arthurgranja/github/astro-context/.claude/worktrees/distracted-panini && python -m pytest tests/test_mcp/test_agent_integration.py -v`
 Expected: FAIL — `AttributeError: 'Agent' object has no attribute '_mcp_configs'`
 
-- [ ] **Step 3: Add MCP support to Agent**
+- [ ] **Step 3a: Add __slots__, __init__, with_mcp_servers(), and chat() guard**
 
 Modify `src/anchor/agent/agent.py`:
 
@@ -2033,6 +2128,15 @@ Modify `src/anchor/agent/agent.py`:
        )
        raise TypeError(msg)
    ```
+
+- [ ] **Step 3b: Verify config tests pass**
+
+Run: `cd /Users/arthurgranja/github/astro-context/.claude/worktrees/distracted-panini && python -m pytest tests/test_mcp/test_agent_integration.py::TestAgentWithMCPServers -v`
+Expected: All 5 TestAgentWithMCPServers tests PASS
+
+- [ ] **Step 3c: Add _aexecute_tool(), _arun_tools(), and _all_active_tools() extension**
+
+Continue modifying `src/anchor/agent/agent.py`:
 
 5. Add `_aexecute_tool()` async method:
    ```python
@@ -2079,6 +2183,15 @@ Modify `src/anchor/agent/agent.py`:
    tools.extend(self._mcp_tools)
    ```
 
+- [ ] **Step 3d: Verify async execution tests pass**
+
+Run: `cd /Users/arthurgranja/github/astro-context/.claude/worktrees/distracted-panini && python -m pytest tests/test_mcp/test_agent_integration.py::TestAgentAsyncMCPExecution -v`
+Expected: All 5 TestAgentAsyncMCPExecution tests PASS
+
+- [ ] **Step 3e: Add lazy MCP connection to achat()**
+
+Continue modifying `src/anchor/agent/agent.py`:
+
 8. In `achat()`, add lazy MCP connection before the tool loop:
    ```python
    # Lazy MCP connection
@@ -2091,10 +2204,10 @@ Modify `src/anchor/agent/agent.py`:
 
 9. In `achat()`, replace `self._run_tools(tool_calls)` with `await self._arun_tools(tool_calls)`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Run all integration tests to verify they pass**
 
 Run: `cd /Users/arthurgranja/github/astro-context/.claude/worktrees/distracted-panini && python -m pytest tests/test_mcp/test_agent_integration.py -v`
-Expected: All 5 tests PASS
+Expected: All 10 tests PASS
 
 - [ ] **Step 5: Run existing agent tests to check for regressions**
 
