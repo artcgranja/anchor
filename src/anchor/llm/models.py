@@ -6,13 +6,13 @@ Provider adapters convert these to/from provider-specific formats.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
 from pydantic import BaseModel
 
 
-class Role(str, Enum):
+class Role(StrEnum):
     """Message role."""
 
     SYSTEM = "system"

@@ -29,33 +29,6 @@ class AgentTool(BaseModel):
     fn: Callable[..., str]
     input_model: type[BaseModel] | None = None
 
-    def to_anthropic_schema(self) -> dict[str, Any]:
-        """Convert to Anthropic tool definition format."""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "input_schema": self.input_schema,
-        }
-
-    def to_openai_schema(self) -> dict[str, Any]:
-        """Convert to OpenAI function-calling format."""
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.input_schema,
-            },
-        }
-
-    def to_generic_schema(self) -> dict[str, Any]:
-        """Convert to a provider-agnostic format."""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "parameters": self.input_schema,
-        }
-
     def to_tool_schema(self) -> ToolSchema:
         """Convert to provider-agnostic ToolSchema."""
         from anchor.llm.models import ToolSchema

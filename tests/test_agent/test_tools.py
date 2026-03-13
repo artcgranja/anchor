@@ -35,17 +35,17 @@ def _fake_embed(text: str) -> list[float]:
 # -- AgentTool --
 
 
-def test_agent_tool_to_anthropic_schema():
+def test_agent_tool_to_tool_schema():
     tool = AgentTool(
         name="my_tool",
         description="A test tool",
         input_schema={"type": "object", "properties": {}},
         fn=lambda: "ok",
     )
-    schema = tool.to_anthropic_schema()
-    assert schema["name"] == "my_tool"
-    assert schema["description"] == "A test tool"
-    assert "type" in schema["input_schema"]
+    schema = tool.to_tool_schema()
+    assert schema.name == "my_tool"
+    assert schema.description == "A test tool"
+    assert "type" in schema.input_schema
 
 
 def test_agent_tool_is_frozen():

@@ -6,11 +6,11 @@ import hashlib
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-Role: TypeAlias = Literal["user", "assistant", "system", "tool"]
+from anchor.llm.models import Role
 
 
 class MemoryType(StrEnum):
