@@ -936,8 +936,9 @@ import pytest
 
 from anchor.llm.models import ToolSchema
 from anchor.mcp.client import FastMCPClientBridge
-from anchor.mcp.errors import MCPConnectionError
+from anchor.mcp.errors import MCPConnectionError, MCPToolError
 from anchor.mcp.models import MCPServerConfig
+from anchor.mcp.protocols import MCPClient
 
 
 @pytest.fixture
@@ -1066,6 +1067,87 @@ class TestFastMCPClientBridge:
 
         assert len(tools) == 1
         assert tools[0].name == "test_greet"  # prefixed with server name
+
+    async def test_satisfies_protocol(self, stdio_config: MCPServerConfig) -> None:
+        bridge = FastMCPClientBridge(stdio_config)
+        assert isinstance(bridge, MCPClient)
+
+    async def test_connect_failure_raises_connection_error(
+        self, stdio_config: MCPServerConfig,
+    ) -> None:
+        bridge = FastMCPClientBridge(stdio_config)
+        with patch("anchor.mcp.client.Client", side_effect=OSError("refused")):
+            with pytest.raises(MCPConnectionError, match="refused"):
+                await bridge.connect()
+
+    async def test_call_tool_failure_raises_tool_error(
+        self, stdio_config: MCPServerConfig,
+    ) -> None:
+        bridge = FastMCPClientBridge(stdio_config)
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.call_tool.side_effect = RuntimeError("tool broke")
+
+        with patch("anchor.mcp.client.Client", return_value=mock_client):
+            await bridge.connect()
+            with pytest.raises(MCPToolError, match="tool broke"):
+                await bridge.call_tool("bad_tool", {})
+
+    async def test_list_tools_no_caching(self, stdio_config: MCPServerConfig) -> None:
+        no_cache_config = MCPServerConfig(
+            name="test", command="echo", args=["hello"], cache_tools=False,
+        )
+        bridge = FastMCPClientBridge(no_cache_config)
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.list_tools.return_value = []
+
+        with patch("anchor.mcp.client.Client", return_value=mock_client):
+            await bridge.connect()
+            await bridge.list_tools()
+            await bridge.list_tools()
+
+        # Called twice since caching is off
+        assert mock_client.list_tools.call_count == 2
+
+    async def test_list_resources(self, stdio_config: MCPServerConfig) -> None:
+        bridge = FastMCPClientBridge(stdio_config)
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_resource = MagicMock()
+        mock_resource.uri = "file:///tmp/test"
+        mock_resource.name = "test"
+        mock_resource.description = "A test resource"
+        mock_resource.mimeType = "text/plain"
+        mock_client.list_resources.return_value = [mock_resource]
+
+        with patch("anchor.mcp.client.Client", return_value=mock_client):
+            await bridge.connect()
+            resources = await bridge.list_resources()
+
+        assert len(resources) == 1
+        assert resources[0].uri == "file:///tmp/test"
+
+    async def test_list_prompts(self, stdio_config: MCPServerConfig) -> None:
+        bridge = FastMCPClientBridge(stdio_config)
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_prompt = MagicMock()
+        mock_prompt.name = "analyze"
+        mock_prompt.description = "Analyze code"
+        mock_prompt.arguments = []
+        mock_client.list_prompts.return_value = [mock_prompt]
+
+        with patch("anchor.mcp.client.Client", return_value=mock_client):
+            await bridge.connect()
+            prompts = await bridge.list_prompts()
+
+        assert len(prompts) == 1
+        assert prompts[0].name == "analyze"
 
     async def test_context_manager(self, stdio_config: MCPServerConfig) -> None:
         mock_client = AsyncMock()
@@ -1318,7 +1400,7 @@ Add `FastMCPClientBridge` to `src/anchor/mcp/__init__.py` imports and `__all__`.
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd /Users/arthurgranja/github/astro-context/.claude/worktrees/distracted-panini && python -m pytest tests/test_mcp/test_client.py -v`
-Expected: All 9 tests PASS
+Expected: All 15 tests PASS
 
 - [ ] **Step 6: Commit**
 
