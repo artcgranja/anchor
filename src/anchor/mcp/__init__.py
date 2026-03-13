@@ -21,10 +21,12 @@ from anchor.mcp.models import (
     MCPServerConfig,
 )
 from anchor.mcp.protocols import MCPClient, MCPServer
+from anchor.mcp.server import FastMCPServerBridge
 from anchor.mcp.tools import mcp_tool_to_agent_tool, parse_server_string
 
 __all__ = [
     "FastMCPClientBridge",
+    "FastMCPServerBridge",
     "MCPClient",
     "MCPClientPool",
     "MCPConfigError",
