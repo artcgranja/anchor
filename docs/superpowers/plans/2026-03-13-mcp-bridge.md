@@ -751,7 +751,7 @@ class TestMCPToolToAgentTool:
 
     def test_sync_fn_raises_mcp_error(self) -> None:
         schema = ToolSchema(
-            name="test",
+            name="test_tool",
             description="test",
             input_schema={"type": "object", "properties": {}},
         )
@@ -767,6 +767,44 @@ class TestMCPToolToAgentTool:
         )
         with pytest.raises(MCPError, match="achat"):
             tool.fn()
+
+    def test_async_caller_and_original_name_attached(self) -> None:
+        schema = ToolSchema(
+            name="read_file",
+            description="Read a file",
+            input_schema={"type": "object", "properties": {}},
+        )
+
+        async def caller(name: str, args: dict) -> str:
+            return "content"
+
+        tool = mcp_tool_to_agent_tool(
+            schema=schema,
+            async_caller=caller,
+            server_name="fs",
+            prefix=True,
+        )
+        # These attributes are used by Agent._aexecute_tool()
+        assert tool._mcp_async_caller is caller
+        assert tool._mcp_original_name == "read_file"
+
+    def test_empty_description(self) -> None:
+        schema = ToolSchema(
+            name="noop",
+            description="",
+            input_schema={"type": "object", "properties": {}},
+        )
+
+        async def caller(name: str, args: dict) -> str:
+            return ""
+
+        tool = mcp_tool_to_agent_tool(
+            schema=schema,
+            async_caller=caller,
+            server_name="s",
+            prefix=False,
+        )
+        assert tool.description == ""
 
 
 class TestParseServerString:
@@ -795,6 +833,14 @@ class TestParseServerString:
         assert cfg.command == "python"
         assert cfg.args == []
         assert cfg.name == "python"
+
+    def test_defaults_applied(self) -> None:
+        cfg = parse_server_string("http://localhost:8080/mcp")
+        assert cfg.cache_tools is True
+        assert cfg.prefix_tools is True
+        assert cfg.timeout == 30.0
+        assert cfg.env is None
+        assert cfg.headers is None
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -900,7 +946,7 @@ Add `mcp_tool_to_agent_tool` and `parse_server_string` to imports and `__all__` 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd /Users/arthurgranja/github/astro-context/.claude/worktrees/distracted-panini && python -m pytest tests/test_mcp/test_tools.py -v`
-Expected: All 7 tests PASS
+Expected: All 10 tests PASS
 
 - [ ] **Step 6: Commit**
 
