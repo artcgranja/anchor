@@ -143,12 +143,26 @@ class MCPServer(Protocol):
         """Register an AgentTool as an MCP tool."""
         ...
 
-    def expose_resource(self, uri: str, handler: Callable[..., str]) -> None:
-        """Register a resource handler at the given URI."""
+    def expose_tools(self, tools: list[AgentTool]) -> None:
+        """Register multiple AgentTools as MCP tools."""
         ...
 
-    def expose_prompt(self, name: str, handler: Callable[..., str]) -> None:
-        """Register a prompt template handler."""
+    def expose_resource(
+        self, uri: str, handler: Callable[..., str] | Callable[..., Any],
+    ) -> None:
+        """Register a resource handler at the given URI.
+
+        Accepts both sync and async handlers.
+        """
+        ...
+
+    def expose_prompt(
+        self, name: str, handler: Callable[..., str] | Callable[..., Any],
+    ) -> None:
+        """Register a prompt template handler.
+
+        Accepts both sync and async handlers.
+        """
         ...
 
     async def run(self, transport: str = "stdio") -> None:
@@ -202,6 +216,16 @@ class MCPServerConfig(BaseModel, frozen=True):
     prefix_tools: bool = True
     """Prefix tool names with server name to prevent collisions.
     E.g., 'filesystem_read_file'. Pattern from LangGraph."""
+
+    timeout: float = 30.0
+    """Timeout in seconds for MCP server operations (connect, tool calls)."""
+
+    @model_validator(mode="after")
+    def _check_transport(self) -> Self:
+        if self.command is None and self.url is None:
+            msg = "MCPServerConfig requires either 'command' (STDIO) or 'url' (HTTP)"
+            raise ValueError(msg)
+        return self
 
 
 class MCPResource(BaseModel, frozen=True):
@@ -285,8 +309,14 @@ class FastMCPClientBridge:
     async def as_agent_tools(self) -> list[AgentTool]:
         """Convert all MCP tools to AgentTool instances.
 
-        Each AgentTool.fn is a sync wrapper that calls self.call_tool()
-        using asyncio.run_coroutine_threadsafe or the running loop.
+        Each AgentTool wraps the MCP tool's schema and provides an async-aware
+        callable. Since Agent._execute_tool() is synchronous, the Agent class
+        must be extended with an _aexecute_tool() async method that handles
+        MCP tools natively via await. The achat() path will use _aexecute_tool()
+        instead of _execute_tool() for MCP-sourced tools.
+
+        AgentTool.fn for MCP tools raises MCPError if called synchronously,
+        guiding users to use achat() instead of chat().
 
         If config.prefix_tools is True, tool names are prefixed:
         'read_file' → 'filesystem_read_file'
@@ -294,7 +324,12 @@ class FastMCPClientBridge:
 
     # Async context manager
     async def __aenter__(self) -> Self: ...
-    async def __aexit__(self, *args) -> None: ...
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None: ...
 ```
 
 ## Multi-Server Pool: MCPClientPool
@@ -319,7 +354,7 @@ class MCPClientPool:
 
     def __init__(self, configs: list[MCPServerConfig]) -> None:
         self._configs = configs
-        self._clients: list[FastMCPClientBridge] = []
+        self._clients: list[MCPClient] = []  # Protocol-typed, not concrete class
 
     async def connect_all(self) -> None:
         """Connect to all configured servers concurrently."""
@@ -366,11 +401,21 @@ class FastMCPServerBridge:
     def expose_tools(self, tools: list[AgentTool]) -> None:
         """Register multiple tools."""
 
-    def expose_resource(self, uri: str, handler: Callable[..., str]) -> None:
-        """Register a resource at the given URI pattern."""
+    def expose_resource(
+        self, uri: str, handler: Callable[..., str] | Callable[..., Any],
+    ) -> None:
+        """Register a resource at the given URI pattern.
 
-    def expose_prompt(self, name: str, handler: Callable[..., str]) -> None:
-        """Register a prompt template."""
+        Accepts both sync and async handlers.
+        """
+
+    def expose_prompt(
+        self, name: str, handler: Callable[..., str] | Callable[..., Any],
+    ) -> None:
+        """Register a prompt template.
+
+        Accepts both sync and async handlers.
+        """
 
     @classmethod
     def from_agent(cls, agent: Agent) -> FastMCPServerBridge:
@@ -469,7 +514,7 @@ Recommendation: Option 1 with a clear error message pointing to `achat()`.
 ## Error Handling
 
 ```python
-class MCPError(AnchorError):
+class MCPError(AstroContextError):
     """Base error for all MCP operations."""
 
 class MCPConnectionError(MCPError):
@@ -494,7 +539,7 @@ class MCPConfigError(MCPError):
     """
 ```
 
-Follows anchor's existing `exceptions.py` pattern where all errors inherit from `AnchorError`.
+Follows anchor's existing `exceptions.py` pattern where all errors inherit from `AstroContextError`.
 
 ## Testing Strategy
 
@@ -553,6 +598,50 @@ mcp = ["fastmcp>=3.0,<4"]
 ```
 
 FastMCP 3.0 brings in the official `mcp` SDK as a transitive dependency. No need to depend on both.
+
+## Implementation Notes
+
+### Agent `__slots__` Update
+
+The `Agent` class uses `__slots__`. New slots needed:
+- `_mcp_configs` — stored `MCPServerConfig` list
+- `_mcp_pool` — lazy `MCPClientPool` instance
+- `_mcp_tools` — cached `list[AgentTool]` from MCP servers
+
+### Agent Async Tool Execution
+
+Add `_aexecute_tool()` async method alongside existing `_execute_tool()`.
+The `achat()` path calls `_aexecute_tool()` which can `await` MCP tool calls
+natively. The sync `chat()` path continues to use `_execute_tool()`.
+
+MCP-sourced `AgentTool` instances are tagged (e.g., via a sentinel `fn` that
+raises `MCPError`) so `_execute_tool()` can detect and reject them with a
+clear error pointing to `achat()`.
+
+### Circular Import Prevention
+
+`FastMCPServerBridge.from_agent()` and `from_pipeline()` use `TYPE_CHECKING`
+guard for the `Agent` and `ContextPipeline` imports:
+
+```python
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from anchor.agent.agent import Agent
+    from anchor.pipeline.pipeline import ContextPipeline
+```
+
+### Module `__all__`
+
+`mcp/__init__.py` defines `__all__` with all public names, following the
+pattern in `exceptions.py` and other anchor modules.
+
+### Field Naming
+
+`MCPResource.mime_type` uses snake_case (Pythonic) rather than MCP spec's
+`mimeType` (camelCase). This is intentional and consistent with how anchor
+handles all external protocol fields.
 
 ## Future Considerations (Out of Scope for v0.2.0)
 
