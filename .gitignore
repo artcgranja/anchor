@@ -209,3 +209,7 @@ docs/site/
 
 # Claude Code
 .claude/
+
+# Local plans and task tracking (not versioned)
+docs/superpowers/
+tasks/
