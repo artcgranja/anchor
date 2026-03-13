@@ -19,14 +19,17 @@ from anchor.mcp.models import (
     MCPResource,
     MCPServerConfig,
 )
+from anchor.mcp.protocols import MCPClient, MCPServer
 
 __all__ = [
+    "MCPClient",
     "MCPConfigError",
     "MCPConnectionError",
     "MCPError",
     "MCPPrompt",
     "MCPPromptArgument",
     "MCPResource",
+    "MCPServer",
     "MCPServerConfig",
     "MCPTimeoutError",
     "MCPToolError",
