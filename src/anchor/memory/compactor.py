@@ -132,7 +132,7 @@ class TierCompactor:
 
     async def aextract_facts(self, content: str, source_tier: int) -> list[KeyFact]:
         """Asynchronously extract key facts from content."""
-        return self._parse_facts(
+        return await self._parse_facts_async(
             await self._call_fact_extraction_async(content), source_tier
         )
 
@@ -214,6 +214,57 @@ class TierCompactor:
                     try:
                         retry_prompt = _FACT_RETRY_PROMPT.format(content=raw_json)
                         response = self._llm.invoke(
+                            [Message(role=Role.USER, content=retry_prompt)]
+                        )
+                        raw_json = response.content or "[]"
+                    except Exception:
+                        return []
+                else:
+                    logger.warning("Fact extraction JSON parse failed after retry; skipping")
+                    return []
+        return []
+
+    async def _parse_facts_async(
+        self, raw_json: str, source_tier: int
+    ) -> list[KeyFact]:
+        """Async variant of _parse_facts — uses ainvoke for retry."""
+        for attempt in range(2):
+            try:
+                cleaned = raw_json.strip()
+                if cleaned.startswith("```"):
+                    lines = cleaned.split("\n")
+                    cleaned = "\n".join(lines[1:-1]) if len(lines) > 2 else "[]"
+
+                data = json.loads(cleaned)
+                if not isinstance(data, list):
+                    return []
+
+                facts: list[KeyFact] = []
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    fact_type_str = item.get("type", "")
+                    if fact_type_str not in _VALID_FACT_TYPES:
+                        continue
+                    fact_content = item.get("content", "")
+                    if not fact_content:
+                        continue
+                    token_count = self._tokenizer.count_tokens(fact_content)
+                    facts.append(
+                        KeyFact(
+                            fact_type=FactType(fact_type_str),
+                            content=fact_content,
+                            source_tier=source_tier,
+                            token_count=token_count,
+                        )
+                    )
+                return facts
+            except (json.JSONDecodeError, KeyError, TypeError):
+                if attempt == 0:
+                    logger.warning("JSON parse failed; retrying with stricter prompt")
+                    try:
+                        retry_prompt = _FACT_RETRY_PROMPT.format(content=raw_json)
+                        response = await self._llm.ainvoke(
                             [Message(role=Role.USER, content=retry_prompt)]
                         )
                         raw_json = response.content or "[]"

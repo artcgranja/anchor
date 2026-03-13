@@ -217,7 +217,10 @@ class ProgressiveSummarizationMemory:
     ) -> ConversationTurn:
         """Async add: collects evicted turns, then runs async LLM compaction."""
         evicted: list[ConversationTurn] = []
-        # Temporarily swap callback to capture evicted turns instead of sync compaction
+        # Temporarily swap callback to capture evicted turns instead of sync compaction.
+        # Safety: the RLock protects the swap-add-restore sequence, so concurrent
+        # callers cannot interleave. This couples to SlidingWindowMemory._on_evict
+        # (a private attribute) — if that class changes internals, this must be updated.
         original_cb = self._window._on_evict
         self._window._on_evict = lambda turns: evicted.extend(turns)
         try:
