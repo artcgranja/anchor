@@ -87,7 +87,6 @@ class TestRegisterProvider:
             create_provider("nonexistent/model")
 
 
-@pytest.mark.skip(reason="FallbackProvider not yet implemented (Task 6)")
 class TestCreateProviderWithFallbacks:
     def test_creates_fallback_provider(self):
         register_provider("fake", FakeProvider)
