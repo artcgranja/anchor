@@ -21,6 +21,7 @@
 | `src/anchor/models/memory.py` | **Modify** | Add `FactType`, `KeyFact`, `SummaryTier`, `TierConfig` |
 | `src/anchor/memory/callbacks.py` | **Modify** | Add `ProgressiveSummarizationCallback` protocol |
 | `src/anchor/memory/manager.py` | **Modify** | Add `isinstance` branch + `conversation_type` for new class |
+| `src/anchor/memory/__init__.py` | **Modify** | Export `ProgressiveSummarizationMemory`, `TierCompactor` from memory subpackage |
 | `src/anchor/__init__.py` | **Modify** | Export `ProgressiveSummarizationMemory`, `TierCompactor` |
 | `tests/test_memory/test_compactor.py` | **Create** | Unit tests for `TierCompactor` |
 | `tests/test_memory/test_progressive.py` | **Create** | Unit tests for `ProgressiveSummarizationMemory` |
@@ -217,6 +218,12 @@ Expected: FAIL with ImportError
 
 Add to `src/anchor/memory/callbacks.py` (after the existing `MemoryCallback` class, before `_fire_memory_callback`):
 
+In the `if TYPE_CHECKING:` block at the top of `callbacks.py`, add `KeyFact`:
+```python
+from anchor.models.memory import ConversationTurn, KeyFact, MemoryEntry
+```
+
+Then add the protocol class:
 ```python
 @runtime_checkable
 class ProgressiveSummarizationCallback(Protocol):
@@ -232,25 +239,13 @@ class ProgressiveSummarizationCallback(Protocol):
         """Called when content cascades from one tier to a lower tier."""
         ...
 
-    def on_facts_extracted(self, facts: list[MemoryEntry], source_tier: int) -> None:
+    def on_facts_extracted(self, facts: list[KeyFact], source_tier: int) -> None:
         """Called when key facts are extracted during a tier transition."""
         ...
 
     def on_compaction_error(self, tier: int, error: Exception) -> None:
         """Called when compaction fails and falls back."""
         ...
-```
-
-Note: The `ProgressiveSummarizationCallback.on_facts_extracted` uses `list[MemoryEntry]` in the TYPE_CHECKING import rather than `list[KeyFact]` because `KeyFact` is in `models.memory` and would create a more complex import. At runtime, `list[KeyFact]` objects will be passed (KeyFact is a Pydantic BaseModel, not a MemoryEntry — but for the protocol signature we use a general type). **Actually, let's use the correct type:** add `KeyFact` to the TYPE_CHECKING imports:
-
-In the `if TYPE_CHECKING:` block at the top of `callbacks.py`, add:
-```python
-from anchor.models.memory import ConversationTurn, KeyFact, MemoryEntry
-```
-
-Then the signature becomes:
-```python
-def on_facts_extracted(self, facts: list[KeyFact], source_tier: int) -> None:
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -686,7 +681,7 @@ class TestTierCompactorAsync:
     def test_asummarize(self) -> None:
         compactor, mock_llm = _make_compactor()
         mock_llm.ainvoke = AsyncMock(return_value=_make_llm_response("Async summary"))
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             compactor.asummarize("content", target_tier=1, target_tokens=500)
         )
         assert result == "Async summary"
@@ -697,7 +692,7 @@ class TestTierCompactorAsync:
         mock_llm.ainvoke = AsyncMock(
             return_value=_make_llm_response('[{"type": "decision", "content": "test"}]')
         )
-        facts = asyncio.get_event_loop().run_until_complete(
+        facts = asyncio.run(
             compactor.aextract_facts("content", source_tier=1)
         )
         assert len(facts) == 1
@@ -706,7 +701,7 @@ class TestTierCompactorAsync:
     def test_asummarize_fallback(self) -> None:
         compactor, mock_llm = _make_compactor()
         mock_llm.ainvoke = AsyncMock(side_effect=Exception("fail"))
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             compactor.asummarize("fallback content", target_tier=1, target_tokens=500)
         )
         assert "fallback" in result
@@ -985,8 +980,7 @@ class ProgressiveSummarizationMemory:
             for tier_level in (3, 2, 1):
                 tier = self._tiers.get(tier_level)
                 if tier is not None:
-                    tier_priority = priority - (3 - tier_level + 1)
-                    # tier 3 = priority - 3, tier 2 = priority - 2, tier 1 = priority - 1
+                    # tier 1 = priority-1, tier 2 = priority-2, tier 3 = priority-3
                     tier_priority = priority - tier_level
                     items.append(
                         ContextItem(
@@ -1044,17 +1038,35 @@ class ProgressiveSummarizationMemory:
     async def aadd_message(
         self, role: Role | str, content: str, **metadata: object
     ) -> ConversationTurn:
-        # Sync add to window (fast), then async cascade
-        with self._lock:
-            turn = self._window.add_turn(role, content, **metadata)
-        # Async cascade handled by _handle_eviction_async if needed
+        """Async add: collects evicted turns, then runs async LLM compaction."""
+        evicted: list[ConversationTurn] = []
+        # Temporarily swap callback to capture evicted turns instead of sync compaction
+        original_cb = self._window._on_evict
+        self._window._on_evict = lambda turns: evicted.extend(turns)
+        try:
+            with self._lock:
+                turn = self._window.add_turn(role, content, **metadata)
+        finally:
+            self._window._on_evict = original_cb
+        # Perform async cascade outside the lock
+        if evicted:
+            await self._handle_eviction_async(evicted)
         return turn
 
     async def aadd_turn(self, turn: ConversationTurn) -> None:
-        with self._lock:
-            self._window.add_turn(
-                role=turn.role, content=turn.content, **turn.metadata
-            )
+        """Async add_turn: collects evicted turns, then runs async LLM compaction."""
+        evicted: list[ConversationTurn] = []
+        original_cb = self._window._on_evict
+        self._window._on_evict = lambda turns: evicted.extend(turns)
+        try:
+            with self._lock:
+                self._window.add_turn(
+                    role=turn.role, content=turn.content, **turn.metadata
+                )
+        finally:
+            self._window._on_evict = original_cb
+        if evicted:
+            await self._handle_eviction_async(evicted)
 
     # -- Introspection --
 
@@ -1214,6 +1226,94 @@ class ProgressiveSummarizationMemory:
         """Fire a callback method on all registered callbacks."""
         from anchor._callbacks import fire_callbacks
         fire_callbacks(self._callbacks, method, *args, logger=logger, log_level=logging.WARNING)
+
+    # -- Async eviction handling (used by aadd_message / aadd_turn) --
+
+    async def _handle_eviction_async(self, evicted_turns: list[ConversationTurn]) -> None:
+        """Async variant of _handle_eviction using async LLM calls."""
+        serialized = _serialize_turns(evicted_turns)
+        turn_count = len(evicted_turns)
+
+        existing_t1 = self._tiers.get(1)
+        existing_summary = existing_t1.content if existing_t1 else None
+        existing_count = existing_t1.source_turn_count if existing_t1 else 0
+        t1_config = self._tier_configs.get(1, TierConfig(level=1, max_tokens=1024, target_tokens=500))
+
+        try:
+            new_summary = await self._compactor.asummarize(
+                serialized, target_tier=1, target_tokens=t1_config.target_tokens,
+                existing_summary=existing_summary,
+            )
+        except Exception:
+            logger.exception("Async tier 1 compaction failed; using raw content")
+            new_summary = serialized
+            self._fire_callback("on_compaction_error", 1, Exception("compaction failed"))
+
+        summary_tokens = self._tokenizer.count_tokens(new_summary)
+        now = datetime.now(UTC)
+
+        self._tiers[1] = SummaryTier(
+            level=1, content=new_summary, token_count=summary_tokens,
+            source_turn_count=existing_count + turn_count,
+            created_at=existing_t1.created_at if existing_t1 else now, updated_at=now,
+        )
+        self._fire_callback("on_tier_cascade", 0, 1, self._tokenizer.count_tokens(serialized), summary_tokens)
+
+        try:
+            new_facts = await self._compactor.aextract_facts(serialized, source_tier=0)
+            if new_facts:
+                self._add_facts(new_facts)
+                self._fire_callback("on_facts_extracted", new_facts, 0)
+        except Exception:
+            logger.warning("Async fact extraction failed during tier 0→1 cascade")
+
+        if summary_tokens > t1_config.max_tokens:
+            await self._cascade_tier_async(1, 2)
+
+    async def _cascade_tier_async(self, from_level: int, to_level: int) -> None:
+        """Async variant of _cascade_tier."""
+        source_tier = self._tiers.get(from_level)
+        if source_tier is None:
+            return
+
+        to_config = self._tier_configs.get(to_level, TierConfig(level=to_level, max_tokens=64, target_tokens=20))
+        existing_target = self._tiers.get(to_level)
+        existing_summary = existing_target.content if existing_target else None
+        existing_count = existing_target.source_turn_count if existing_target else 0
+
+        try:
+            new_summary = await self._compactor.asummarize(
+                source_tier.content, target_tier=to_level, target_tokens=to_config.target_tokens,
+                existing_summary=existing_summary,
+            )
+        except Exception:
+            logger.exception("Async tier %d→%d compaction failed", from_level, to_level)
+            new_summary = source_tier.content
+            self._fire_callback("on_compaction_error", to_level, Exception("cascade failed"))
+
+        summary_tokens = self._tokenizer.count_tokens(new_summary)
+        now = datetime.now(UTC)
+
+        self._tiers[to_level] = SummaryTier(
+            level=to_level, content=new_summary, token_count=summary_tokens,
+            source_turn_count=existing_count + source_tier.source_turn_count,
+            created_at=existing_target.created_at if existing_target else now, updated_at=now,
+        )
+
+        if from_level < 2:
+            try:
+                new_facts = await self._compactor.aextract_facts(source_tier.content, source_tier=from_level)
+                if new_facts:
+                    self._add_facts(new_facts)
+                    self._fire_callback("on_facts_extracted", new_facts, from_level)
+            except Exception:
+                logger.warning("Async fact extraction failed during tier %d→%d cascade", from_level, to_level)
+
+        self._tiers[from_level] = None
+        self._fire_callback("on_tier_cascade", from_level, to_level, source_tier.token_count, summary_tokens)
+
+        if to_level < 3 and summary_tokens > to_config.max_tokens:
+            await self._cascade_tier_async(to_level, to_level + 1)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -1385,6 +1485,85 @@ class TestProgressiveContextOutput:
         if summary_items:
             # Tier 1 at priority=5-1=4
             assert summary_items[0].priority == 4
+
+
+class TestProgressiveAddTurn:
+    def test_add_turn_with_conversation_turn(self) -> None:
+        mock_llm = _make_mock_llm()
+        mem = ProgressiveSummarizationMemory(
+            max_tokens=8192, llm=mock_llm, tokenizer=FakeTokenizer()
+        )
+        from anchor.models.memory import ConversationTurn
+        turn = ConversationTurn(role="user", content="hello world", token_count=2)
+        mem.add_turn(turn)
+        assert len(mem.turns) == 1
+        assert mem.turns[0].content == "hello world"
+
+
+class TestProgressiveAsync:
+    def test_aadd_message_uses_async_compaction(self) -> None:
+        """aadd_message should use async LLM calls for compaction."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        mock_llm = _make_mock_llm(summary="Async summary")
+        mock_llm.ainvoke = AsyncMock(return_value=_make_llm_response("Async summary"))
+        config = [
+            TierConfig(level=0, max_tokens=5),
+            TierConfig(level=1, max_tokens=100, target_tokens=50),
+            TierConfig(level=2, max_tokens=50, target_tokens=20),
+            TierConfig(level=3, max_tokens=20, target_tokens=5),
+        ]
+        mem = ProgressiveSummarizationMemory(
+            max_tokens=200, llm=mock_llm, tier_config=config, tokenizer=FakeTokenizer()
+        )
+
+        async def run():
+            for i in range(5):
+                await mem.aadd_message("user", f"word{i} word{i}")
+
+        asyncio.run(run())
+        # Should have used ainvoke (async) not invoke (sync) for compaction
+        mock_llm.ainvoke.assert_awaited()
+
+    def test_aadd_turn_delegates(self) -> None:
+        import asyncio
+        mock_llm = _make_mock_llm()
+        mem = ProgressiveSummarizationMemory(
+            max_tokens=8192, llm=mock_llm, tokenizer=FakeTokenizer()
+        )
+        from anchor.models.memory import ConversationTurn
+        turn = ConversationTurn(role="user", content="async turn", token_count=2)
+        asyncio.run(mem.aadd_turn(turn))
+        assert len(mem.turns) == 1
+
+
+class TestProgressiveThreadSafety:
+    def test_concurrent_add_message_no_corruption(self) -> None:
+        """Concurrent add_message calls should not corrupt state."""
+        import threading
+
+        mock_llm = _make_mock_llm(summary="Summary")
+        mem = ProgressiveSummarizationMemory(
+            max_tokens=8192, llm=mock_llm, tokenizer=FakeTokenizer()
+        )
+        errors: list[Exception] = []
+
+        def add_messages(start: int) -> None:
+            try:
+                for i in range(10):
+                    mem.add_message("user", f"thread-{start}-msg-{i}")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=add_messages, args=(t,)) for t in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        assert len(mem.turns) == 30
 ```
 
 - [ ] **Step 2: Run cascade tests**
@@ -1528,15 +1707,24 @@ if isinstance(self._conversation, SummaryBufferMemory):
     ...
 ```
 
-- [ ] **Step 4: Update public exports in `src/anchor/__init__.py`**
+- [ ] **Step 4: Update `src/anchor/memory/__init__.py` exports**
+
+Add to `src/anchor/memory/__init__.py` (alongside existing exports like `SlidingWindowMemory`, `SummaryBufferMemory`):
+```python
+from .compactor import TierCompactor
+from .progressive import ProgressiveSummarizationMemory
+```
+
+And add both to `__all__` if it exists.
+
+- [ ] **Step 4b: Update public exports in `src/anchor/__init__.py`**
 
 In the Memory Management section of the imports, add:
 ```python
-from anchor.memory.progressive import ProgressiveSummarizationMemory
-from anchor.memory.compactor import TierCompactor
+from anchor.memory import ProgressiveSummarizationMemory, TierCompactor
 ```
 
-And add both to the `__all__` list if one exists, or ensure they appear in the module docstring's Memory Management section.
+And add both to the `__all__` list if one exists. Update the module docstring's Memory Management section to include the new classes.
 
 - [ ] **Step 5: Run integration tests**
 
@@ -1551,7 +1739,7 @@ Expected: All existing tests still pass
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/anchor/memory/manager.py src/anchor/__init__.py tests/test_memory/test_progressive_integration.py
+git add src/anchor/memory/manager.py src/anchor/memory/__init__.py src/anchor/__init__.py tests/test_memory/test_progressive_integration.py
 git commit -m "feat(memory): integrate ProgressiveSummarizationMemory with MemoryManager and exports"
 ```
 
