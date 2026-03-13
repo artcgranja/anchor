@@ -8,7 +8,11 @@ compliance using FakeTokenizer.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import pytest
+
+pytest.importorskip("tiktoken", reason="tiktoken required for TiktokenCounter tests")
+
+from unittest.mock import patch  # noqa: E402
 
 from anchor.protocols.tokenizer import Tokenizer
 from anchor.tokens.counter import TiktokenCounter
