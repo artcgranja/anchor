@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -456,7 +456,7 @@ class Agent:
         if self._memory is not None and final_text:
             self._memory.add_assistant_message(final_text)
 
-    async def achat(self, message: str) -> AsyncIterator[str]:
+    async def achat(self, message: str) -> AsyncGenerator[str, None]:
         """Send a message and stream the response asynchronously.
 
         Async mirror of :meth:`chat`. Uses ``pipeline.abuild()`` and

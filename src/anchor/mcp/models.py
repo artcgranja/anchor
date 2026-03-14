@@ -42,8 +42,8 @@ class MCPServerConfig(BaseModel, frozen=True):
     prefix_tools: bool = True
     """Prefix tool names with server name to prevent collisions."""
 
-    timeout: float = 30.0
-    """Timeout in seconds for MCP server operations."""
+    timeout: float | None = 30.0
+    """Timeout in seconds for MCP server operations. None disables timeout."""
 
     @model_validator(mode="after")
     def _check_transport(self) -> Self:

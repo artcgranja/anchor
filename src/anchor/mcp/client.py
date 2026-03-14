@@ -272,10 +272,13 @@ class MCPClientPool:
                 b for b, r in zip(bridges, results, strict=True)
                 if not isinstance(r, BaseException)
             ]
-            await asyncio.gather(
+            cleanup_results = await asyncio.gather(
                 *(b.disconnect() for b in connected),
                 return_exceptions=True,
             )
+            for r in cleanup_results:
+                if isinstance(r, Exception):
+                    logger.error("MCP cleanup error during failed connect_all: %s", r)
             raise errors[0]
         self._clients = bridges
 

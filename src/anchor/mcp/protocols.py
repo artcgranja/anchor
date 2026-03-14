@@ -61,5 +61,5 @@ class MCPServer(Protocol):
     ) -> None: ...
 
     async def run(
-        self, transport: Literal["stdio", "sse"] = "stdio",
+        self, transport: Literal["stdio", "sse", "http"] = "stdio",
     ) -> None: ...

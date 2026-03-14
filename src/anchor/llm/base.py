@@ -63,7 +63,7 @@ class LLMProvider(Protocol):
         **kwargs: Any,
     ) -> LLMResponse: ...
 
-    def astream(
+    async def astream(
         self,
         messages: list[Message],
         *,

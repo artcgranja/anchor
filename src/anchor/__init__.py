@@ -1,7 +1,8 @@
 """anchor: Context engineering toolkit for AI applications.
 
 Agent:
-    Agent, AgentTool, tool, memory_tools, rag_tools
+    Agent, AgentTool, tool, Skill, SkillRegistry,
+    memory_skill, memory_tools, rag_skill, rag_tools
 
 Core Pipeline:
     ContextPipeline, ContextResult, PipelineStep, PipelineCallback,
@@ -10,6 +11,20 @@ Core Pipeline:
     async_retriever_step, async_postprocessor_step, async_reranker_step,
     auto_promotion_step, graph_retrieval_step, create_eviction_promoter,
     query_transform_step, classified_retriever_step
+
+LLM Providers:
+    BaseLLMProvider, LLMProvider, LLMResponse, Message, ContentBlock,
+    FallbackProvider, create_provider, register_provider,
+    ToolCall, ToolCallDelta, ToolResult, ToolSchema, Usage, StopReason,
+    StreamChunk, calculate_cost, MODEL_PRICING,
+    ProviderError, AuthenticationError, RateLimitError, ContentFilterError,
+    ModelNotFoundError, ServerError, TimeoutError, ProviderNotInstalledError
+
+MCP Bridge (optional — requires astro-anchor[mcp]):
+    FastMCPClientBridge, FastMCPServerBridge, MCPClient, MCPClientPool,
+    MCPServer, MCPServerConfig, MCPResource, MCPPrompt, MCPPromptArgument,
+    mcp_tool_to_agent_tool, parse_server_string,
+    MCPError, MCPConfigError, MCPConnectionError, MCPTimeoutError, MCPToolError
 
 Caching:
     CacheBackend, InMemoryCacheBackend
@@ -28,19 +43,23 @@ Retrieval:
     CrossEncoderReranker, CohereReranker, FlashRankReranker,
     RoundRobinReranker, RerankerPipeline,
     ScoredMemoryRetriever, MemoryRetrieverAdapter, rrf_fuse,
-    CallbackRouter, KeywordRouter, MetadataRouter, RoutedRetriever
+    CallbackRouter, KeywordRouter, MetadataRouter, RoutedRetriever,
+    LateInteractionRetriever, SharedSpaceRetriever, CrossModalEncoder
 
 Formatting:
     AnthropicFormatter, OpenAIFormatter, GenericTextFormatter, BaseFormatter
 
 Query Transformation:
     HyDETransformer, MultiQueryTransformer, DecompositionTransformer,
-    StepBackTransformer, QueryTransformPipeline, query_transform_step
+    StepBackTransformer, QueryTransformPipeline, query_transform_step,
+    ContextualQueryTransformer, ConversationRewriter,
+    KeywordClassifier, EmbeddingClassifier, CallbackClassifier
 
 Evaluation:
     RetrievalMetrics, RAGMetrics, EvaluationResult,
     RetrievalMetricsCalculator, LLMRAGEvaluator, PipelineEvaluator,
-    EvaluationSample, EvaluationDataset, AggregatedMetrics, BatchEvaluator
+    EvaluationSample, EvaluationDataset, AggregatedMetrics, BatchEvaluator,
+    ABTestRunner, ABTestResult, HumanEvaluationCollector, HumanJudgment
 
 Multi-modal:
     ModalityType, MultiModalContent, MultiModalItem, MultiModalConverter,
@@ -67,7 +86,7 @@ Protocols (extension points):
     RetrievalEvaluator, RAGEvaluator,
     ModalityEncoder, TableExtractor,
     SpanExporter, MetricsCollector,
-    QueryRouter, CacheBackend
+    QueryRouter, QueryClassifier, CacheBackend
 
 Storage:
     InMemoryContextStore, InMemoryDocumentStore, InMemoryVectorStore,
@@ -84,7 +103,8 @@ Ingestion:
     DocumentIngester, FixedSizeChunker, RecursiveCharacterChunker,
     SemanticChunker, SentenceChunker, ParentChildChunker, ParentExpander,
     PlainTextParser, MarkdownParser, HTMLParser, PDFParser,
-    MetadataEnricher, generate_doc_id, generate_chunk_id, extract_chunk_metadata
+    MetadataEnricher, generate_doc_id, generate_chunk_id, extract_chunk_metadata,
+    CodeChunker, TableAwareChunker
 
 Exceptions:
     AstroContextError, FormatterError, IngestionError, RetrieverError,
@@ -638,6 +658,8 @@ else:
         MCPServerConfig,
         MCPTimeoutError,
         MCPToolError,
+        mcp_tool_to_agent_tool,
+        parse_server_string,
     )
 
     __all__ += [
@@ -655,4 +677,6 @@ else:
         "MCPServerConfig",
         "MCPTimeoutError",
         "MCPToolError",
+        "mcp_tool_to_agent_tool",
+        "parse_server_string",
     ]
