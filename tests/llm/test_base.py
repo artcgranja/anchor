@@ -138,13 +138,11 @@ class TestRetryLogic:
 
 
 class TestAsyncRetryLogic:
-    @pytest.mark.asyncio
     async def test_ainvoke_success(self):
         p = ConcreteProvider(model="m")
         result = await p.ainvoke([Message(role=Role.USER, content="hi")])
         assert result.content == "hello"
 
-    @pytest.mark.asyncio
     async def test_astream_success(self):
         p = ConcreteProvider(model="m")
         chunks = []
@@ -152,7 +150,6 @@ class TestAsyncRetryLogic:
             chunks.append(chunk)
         assert len(chunks) == 2
 
-    @pytest.mark.asyncio
     async def test_async_retries_on_transient(self):
         call_count = 0
 
@@ -164,6 +161,65 @@ class TestAsyncRetryLogic:
                     raise ServerError("500", provider="test")
                 return _make_response()
 
-        p = AsyncRetryProvider(model="m", max_retries=1)
-        result = await p.ainvoke([Message(role=Role.USER, content="hi")])
+        with patch("anchor.llm.base.asyncio.sleep", return_value=None):
+            p = AsyncRetryProvider(model="m", max_retries=1)
+            result = await p.ainvoke([Message(role=Role.USER, content="hi")])
         assert result.content == "hello"
+
+
+class TestStreamRetryLogic:
+    @patch("time.sleep")
+    def test_stream_succeeds(self, mock_sleep):
+        p = ConcreteProvider(model="m")
+        msgs = [Message(role=Role.USER, content="hi")]
+        chunks = list(p.stream(msgs))
+        assert len(chunks) == 2
+        assert chunks[0].content == "hello"
+        assert mock_sleep.call_count == 0
+
+    @patch("time.sleep")
+    def test_stream_retries_on_transient_error(self, mock_sleep):
+        call_count = 0
+
+        class StreamRetryProvider(ConcreteProvider):
+            def _do_stream(self, messages, tools, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count < 2:
+                    raise ServerError("500", provider="test")
+                yield StreamChunk(content="recovered")
+                yield StreamChunk(stop_reason=StopReason.STOP)
+
+        p = StreamRetryProvider(model="m", max_retries=1)
+        chunks = list(p.stream([Message(role=Role.USER, content="hi")]))
+        assert call_count == 2
+        assert chunks[0].content == "recovered"
+        assert mock_sleep.call_count == 1
+
+    async def test_astream_succeeds(self):
+        p = ConcreteProvider(model="m")
+        chunks = []
+        async for chunk in p.astream([Message(role=Role.USER, content="hi")]):
+            chunks.append(chunk)
+        assert len(chunks) == 2
+        assert chunks[0].content == "hello"
+
+    async def test_astream_retries_on_transient_error(self):
+        call_count = 0
+
+        class AsyncStreamRetryProvider(ConcreteProvider):
+            async def _do_astream(self, messages, tools, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count < 2:
+                    raise ServerError("500", provider="test")
+                yield StreamChunk(content="recovered")
+                yield StreamChunk(stop_reason=StopReason.STOP)
+
+        with patch("anchor.llm.base.asyncio.sleep", return_value=None):
+            p = AsyncStreamRetryProvider(model="m", max_retries=1)
+            chunks = []
+            async for chunk in p.astream([Message(role=Role.USER, content="hi")]):
+                chunks.append(chunk)
+        assert call_count == 2
+        assert chunks[0].content == "recovered"

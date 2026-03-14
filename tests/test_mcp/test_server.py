@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("fastmcp", reason="fastmcp required for MCP server tests")
+
 from anchor.agent.tool_decorator import tool
 from anchor.mcp.protocols import MCPServer
 from anchor.mcp.server import FastMCPServerBridge

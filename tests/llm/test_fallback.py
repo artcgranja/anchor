@@ -153,3 +153,51 @@ class TestFallbackStream:
         assert first.content == "partial"
         with pytest.raises(ServerError):
             next(stream)
+
+
+class TestFallbackAsyncInvoke:
+    async def test_ainvoke_uses_primary_provider(self):
+        fb = FallbackProvider(
+            primary=StubProvider(invoke_fn=lambda: _resp("primary")),
+            fallbacks=[StubProvider(invoke_fn=lambda: _resp("fallback"))],
+        )
+        result = await fb.ainvoke([Message(role=Role.USER, content="hi")])
+        assert result.provider == "primary"
+
+    async def test_ainvoke_falls_back_on_error(self):
+        def fail():
+            raise ServerError("500", provider="primary")
+
+        fb = FallbackProvider(
+            primary=StubProvider(invoke_fn=fail),
+            fallbacks=[StubProvider(invoke_fn=lambda: _resp("fallback"))],
+        )
+        result = await fb.ainvoke([Message(role=Role.USER, content="hi")])
+        assert result.provider == "fallback"
+
+
+class TestFallbackAsyncStream:
+    async def test_astream_uses_primary_provider(self):
+        fb = FallbackProvider(
+            primary=StubProvider(),
+            fallbacks=[StubProvider()],
+        )
+        chunks = []
+        async for chunk in fb.astream([Message(role=Role.USER, content="hi")]):
+            chunks.append(chunk)
+        assert len(chunks) >= 1
+
+    async def test_astream_falls_back_on_error(self):
+        """If primary fails before yielding, fallback kicks in."""
+        def fail_stream():
+            raise ServerError("500", provider="primary")
+            yield  # make it a generator  # noqa: E501
+
+        fb = FallbackProvider(
+            primary=StubProvider(stream_fn=fail_stream),
+            fallbacks=[StubProvider()],
+        )
+        chunks = []
+        async for chunk in fb.astream([Message(role=Role.USER, content="hi")]):
+            chunks.append(chunk)
+        assert any(c.content == "ok" for c in chunks)
