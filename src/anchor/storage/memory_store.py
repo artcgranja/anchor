@@ -149,3 +149,178 @@ class InMemoryDocumentStore:
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(documents={len(self._documents)})"
+
+
+class InMemoryGraphStore:
+    """Dict-backed graph store. Implements GraphStore protocol."""
+
+    __slots__ = ("_adjacency", "_adjacency_dirty", "_edge_metadata", "_edges",
+                 "_entity_to_memories", "_lock", "_nodes")
+
+    def __init__(self) -> None:
+        self._nodes: dict[str, dict[str, Any]] = {}
+        self._edges: list[tuple[str, str, str]] = []
+        self._edge_metadata: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._entity_to_memories: dict[str, list[str]] = {}
+        self._adjacency: dict[str, set[str]] = {}
+        self._adjacency_dirty: bool = True
+        self._lock = threading.Lock()
+
+    def add_node(self, node_id: str, metadata: dict[str, Any] | None = None) -> None:
+        with self._lock:
+            if node_id in self._nodes:
+                if metadata:
+                    self._nodes[node_id].update(metadata)
+            else:
+                self._nodes[node_id] = dict(metadata) if metadata else {}
+
+    def add_edge(
+        self, source: str, relation: str, target: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        with self._lock:
+            if source not in self._nodes:
+                self._nodes[source] = {}
+            if target not in self._nodes:
+                self._nodes[target] = {}
+            edge_key = (source, relation, target)
+            if edge_key not in self._edge_metadata:
+                self._edges.append(edge_key)
+            if metadata:
+                self._edge_metadata[edge_key] = metadata
+            elif edge_key not in self._edge_metadata:
+                self._edge_metadata[edge_key] = {}
+            self._adjacency_dirty = True
+
+    def _rebuild_adjacency(self, relation_filter: str | list[str] | None = None) -> dict[str, set[str]]:
+        """Build adjacency index, optionally filtered by relation types."""
+        if relation_filter is not None:
+            allowed = {relation_filter} if isinstance(relation_filter, str) else set(relation_filter)
+        else:
+            allowed = None
+        adj: dict[str, set[str]] = {}
+        for src, rel, tgt in self._edges:
+            if allowed is not None and rel not in allowed:
+                continue
+            adj.setdefault(src, set()).add(tgt)
+            adj.setdefault(tgt, set()).add(src)
+        return adj
+
+    def get_neighbors(
+        self, node_id: str, max_depth: int = 1,
+        relation_filter: str | list[str] | None = None,
+    ) -> list[str]:
+        with self._lock:
+            if node_id not in self._nodes:
+                return []
+            adj = self._rebuild_adjacency(relation_filter)
+            from collections import deque
+            visited: set[str] = {node_id}
+            queue: deque[tuple[str, int]] = deque([(node_id, 0)])
+            result: list[str] = []
+            while queue:
+                current, depth = queue.popleft()
+                if depth >= max_depth:
+                    continue
+                for neighbor in adj.get(current, set()):
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        result.append(neighbor)
+                        queue.append((neighbor, depth + 1))
+            return result
+
+    def get_edges(self, node_id: str) -> list[tuple[str, str, str]]:
+        with self._lock:
+            return [
+                (s, r, t) for s, r, t in self._edges
+                if s == node_id or t == node_id
+            ]
+
+    def get_node_metadata(self, node_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            if node_id not in self._nodes:
+                return None
+            return dict(self._nodes[node_id])
+
+    def link_memory(self, node_id: str, memory_id: str) -> None:
+        with self._lock:
+            if node_id not in self._nodes:
+                msg = f"Entity '{node_id}' does not exist in the graph"
+                raise KeyError(msg)
+            self._entity_to_memories.setdefault(node_id, []).append(memory_id)
+
+    def get_memory_ids(self, node_id: str, max_depth: int = 1) -> list[str]:
+        with self._lock:
+            all_entities = [node_id, *self._get_neighbors_unlocked(node_id, max_depth)]
+            seen: set[str] = set()
+            result: list[str] = []
+            for eid in all_entities:
+                for mid in self._entity_to_memories.get(eid, []):
+                    if mid not in seen:
+                        seen.add(mid)
+                        result.append(mid)
+            return result
+
+    def _get_neighbors_unlocked(self, node_id: str, max_depth: int = 1) -> list[str]:
+        """Internal BFS without lock (caller must hold lock)."""
+        if node_id not in self._nodes:
+            return []
+        adj = self._rebuild_adjacency()
+        from collections import deque
+        visited: set[str] = {node_id}
+        queue: deque[tuple[str, int]] = deque([(node_id, 0)])
+        result: list[str] = []
+        while queue:
+            current, depth = queue.popleft()
+            if depth >= max_depth:
+                continue
+            for neighbor in adj.get(current, set()):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    result.append(neighbor)
+                    queue.append((neighbor, depth + 1))
+        return result
+
+    def remove_node(self, node_id: str) -> None:
+        with self._lock:
+            self._nodes.pop(node_id, None)
+            old_edges = self._edges
+            self._edges = [
+                (s, r, t) for s, r, t in old_edges
+                if s != node_id and t != node_id
+            ]
+            # Clean edge metadata
+            for key in list(self._edge_metadata):
+                if key[0] == node_id or key[2] == node_id:
+                    del self._edge_metadata[key]
+            self._entity_to_memories.pop(node_id, None)
+            self._adjacency_dirty = True
+
+    def remove_edge(self, source: str, relation: str, target: str) -> bool:
+        with self._lock:
+            edge_key = (source, relation, target)
+            if edge_key in self._edge_metadata:
+                self._edges.remove(edge_key)
+                del self._edge_metadata[edge_key]
+                self._adjacency_dirty = True
+                return True
+            return False
+
+    def list_nodes(self) -> list[str]:
+        with self._lock:
+            return list(self._nodes)
+
+    def list_edges(self) -> list[tuple[str, str, str]]:
+        with self._lock:
+            return list(self._edges)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._nodes.clear()
+            self._edges.clear()
+            self._edge_metadata.clear()
+            self._entity_to_memories.clear()
+            self._adjacency_dirty = True
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(nodes={len(self._nodes)}, edges={len(self._edges)})"
