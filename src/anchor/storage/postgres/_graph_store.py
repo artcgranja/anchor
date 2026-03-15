@@ -139,18 +139,11 @@ class PostgresGraphStore:
     async def get_memory_ids(self, node_id: str, max_depth: int = 1) -> list[str]:
         all_nodes = [node_id, *(await self.get_neighbors(node_id, max_depth=max_depth))]
         async with self._conn_manager.acquire() as conn:
-            result: list[str] = []
-            seen: set[str] = set()
-            for nid in all_nodes:
-                rows = await conn.fetch(
-                    "SELECT memory_id FROM graph_memory_links WHERE node_id = $1", nid
-                )
-                for row in rows:
-                    mid = row["memory_id"]
-                    if mid not in seen:
-                        seen.add(mid)
-                        result.append(mid)
-            return result
+            rows = await conn.fetch(
+                "SELECT DISTINCT memory_id FROM graph_memory_links WHERE node_id = ANY($1::text[])",
+                all_nodes,
+            )
+            return [row["memory_id"] for row in rows]
 
     async def remove_node(self, node_id: str) -> None:
         async with self._conn_manager.acquire() as conn:
@@ -164,7 +157,11 @@ class PostgresGraphStore:
                 "DELETE FROM graph_edges WHERE source = $1 AND relation = $2 AND target = $3",
                 source, relation, target,
             )
-            return int(result.split()[-1]) > 0
+            # asyncpg returns status like "DELETE N"
+            try:
+                return int(result.split()[-1]) > 0
+            except (ValueError, IndexError):
+                return False
 
     async def list_nodes(self) -> list[str]:
         async with self._conn_manager.acquire() as conn:

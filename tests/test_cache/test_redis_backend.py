@@ -67,4 +67,5 @@ class TestRedisCacheOperations:
         client.scan_iter.return_value = iter([b"anchor:cache:k1", b"anchor:cache:k2"])
         cache.clear()
         client.scan_iter.assert_called_once()
-        assert client.delete.call_count == 2
+        # Keys are batched into a single delete call
+        client.delete.assert_called_once_with(b"anchor:cache:k1", b"anchor:cache:k2")

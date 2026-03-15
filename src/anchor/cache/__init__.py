@@ -13,4 +13,7 @@ try:
     from .redis_backend import RedisCacheBackend
     __all__.append("RedisCacheBackend")
 except ImportError:
-    pass
+    import importlib.util as _iu
+    if _iu.find_spec("redis") is not None:
+        raise  # redis installed but import still failed — surface the real error
+    del _iu

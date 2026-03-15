@@ -382,75 +382,241 @@ class AsyncGarbageCollectableStore(Protocol):
 
 @runtime_checkable
 class GraphStore(Protocol):
-    """Protocol for persistent graph storage (entities + relationships)."""
+    """Protocol for persistent graph storage (entities + relationships).
 
-    def add_node(self, node_id: str, metadata: dict[str, Any] | None = None) -> None: ...
+    Stores a directed labelled graph where nodes represent entities and
+    edges represent typed relationships between them.  Each node and edge
+    may carry arbitrary JSON-serialisable metadata.  Nodes can be linked
+    to ``MemoryEntry`` IDs for knowledge-graph-backed retrieval.
+
+    Behavioural contract
+    --------------------
+    * ``add_edge`` auto-creates source/target nodes if they do not exist.
+    * ``remove_node`` cascades to remove associated edges and memory links.
+    * ``link_memory`` raises ``KeyError`` if the node does not exist.
+    * ``get_neighbors`` performs cycle-safe BFS up to *max_depth*.
+    """
+
+    def add_node(self, node_id: str, metadata: dict[str, Any] | None = None) -> None:
+        """Create or update a node.  Merges *metadata* if the node exists."""
+        ...
+
     def add_edge(
         self, source: str, relation: str, target: str,
         metadata: dict[str, Any] | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Add a directed edge.  Implicitly creates source/target nodes."""
+        ...
+
     def get_neighbors(
         self, node_id: str, max_depth: int = 1,
         relation_filter: str | list[str] | None = None,
-    ) -> list[str]: ...
-    def get_edges(self, node_id: str) -> list[tuple[str, str, str]]: ...
-    def get_node_metadata(self, node_id: str) -> dict[str, Any] | None: ...
-    def link_memory(self, node_id: str, memory_id: str) -> None: ...
-    def get_memory_ids(self, node_id: str, max_depth: int = 1) -> list[str]: ...
-    def remove_node(self, node_id: str) -> None: ...
-    def remove_edge(self, source: str, relation: str, target: str) -> bool: ...
-    def list_nodes(self) -> list[str]: ...
-    def list_edges(self) -> list[tuple[str, str, str]]: ...
-    def clear(self) -> None: ...
+    ) -> list[str]:
+        """Return node IDs reachable within *max_depth* hops (BFS).
+
+        Parameters:
+            node_id: Starting node.
+            max_depth: Maximum traversal depth (default 1).
+            relation_filter: If provided, only traverse edges whose
+                relation matches one of the given values.
+
+        Returns:
+            List of reachable node IDs (excluding *node_id* itself).
+        """
+        ...
+
+    def get_edges(self, node_id: str) -> list[tuple[str, str, str]]:
+        """Return all edges where *node_id* is source or target.
+
+        Each edge is a ``(source, relation, target)`` tuple.
+        """
+        ...
+
+    def get_node_metadata(self, node_id: str) -> dict[str, Any] | None:
+        """Return metadata for *node_id*, or ``None`` if the node does not exist."""
+        ...
+
+    def link_memory(self, node_id: str, memory_id: str) -> None:
+        """Associate a ``MemoryEntry`` ID with a node.
+
+        Raises:
+            KeyError: If *node_id* does not exist.
+        """
+        ...
+
+    def get_memory_ids(self, node_id: str, max_depth: int = 1) -> list[str]:
+        """Return distinct memory IDs linked to *node_id* and its neighbours."""
+        ...
+
+    def remove_node(self, node_id: str) -> None:
+        """Delete a node, its edges, and its memory links."""
+        ...
+
+    def remove_edge(self, source: str, relation: str, target: str) -> bool:
+        """Delete a specific edge.  Returns ``True`` if the edge existed."""
+        ...
+
+    def list_nodes(self) -> list[str]:
+        """Return all node IDs in the graph."""
+        ...
+
+    def list_edges(self) -> list[tuple[str, str, str]]:
+        """Return all edges as ``(source, relation, target)`` tuples."""
+        ...
+
+    def clear(self) -> None:
+        """Remove all nodes, edges, and memory links."""
+        ...
 
 
 @runtime_checkable
 class AsyncGraphStore(Protocol):
-    """Async variant of GraphStore."""
+    """Async variant of :class:`GraphStore`.  Same behavioural contract."""
 
-    async def add_node(self, node_id: str, metadata: dict[str, Any] | None = None) -> None: ...
+    async def add_node(self, node_id: str, metadata: dict[str, Any] | None = None) -> None:
+        """Create or update a node.  Merges *metadata* if the node exists."""
+        ...
+
     async def add_edge(
         self, source: str, relation: str, target: str,
         metadata: dict[str, Any] | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Add a directed edge.  Implicitly creates source/target nodes."""
+        ...
+
     async def get_neighbors(
         self, node_id: str, max_depth: int = 1,
         relation_filter: str | list[str] | None = None,
-    ) -> list[str]: ...
-    async def get_edges(self, node_id: str) -> list[tuple[str, str, str]]: ...
-    async def get_node_metadata(self, node_id: str) -> dict[str, Any] | None: ...
-    async def link_memory(self, node_id: str, memory_id: str) -> None: ...
-    async def get_memory_ids(self, node_id: str, max_depth: int = 1) -> list[str]: ...
-    async def remove_node(self, node_id: str) -> None: ...
-    async def remove_edge(self, source: str, relation: str, target: str) -> bool: ...
-    async def list_nodes(self) -> list[str]: ...
-    async def list_edges(self) -> list[tuple[str, str, str]]: ...
-    async def clear(self) -> None: ...
+    ) -> list[str]:
+        """Return node IDs reachable within *max_depth* hops (BFS)."""
+        ...
+
+    async def get_edges(self, node_id: str) -> list[tuple[str, str, str]]:
+        """Return all edges where *node_id* is source or target."""
+        ...
+
+    async def get_node_metadata(self, node_id: str) -> dict[str, Any] | None:
+        """Return metadata for *node_id*, or ``None`` if not found."""
+        ...
+
+    async def link_memory(self, node_id: str, memory_id: str) -> None:
+        """Associate a ``MemoryEntry`` ID with a node.  Raises ``KeyError`` if missing."""
+        ...
+
+    async def get_memory_ids(self, node_id: str, max_depth: int = 1) -> list[str]:
+        """Return distinct memory IDs linked to *node_id* and its neighbours."""
+        ...
+
+    async def remove_node(self, node_id: str) -> None:
+        """Delete a node, its edges, and its memory links."""
+        ...
+
+    async def remove_edge(self, source: str, relation: str, target: str) -> bool:
+        """Delete a specific edge.  Returns ``True`` if the edge existed."""
+        ...
+
+    async def list_nodes(self) -> list[str]:
+        """Return all node IDs in the graph."""
+        ...
+
+    async def list_edges(self) -> list[tuple[str, str, str]]:
+        """Return all edges as ``(source, relation, target)`` tuples."""
+        ...
+
+    async def clear(self) -> None:
+        """Remove all nodes, edges, and memory links."""
+        ...
 
 
 @runtime_checkable
 class ConversationStore(Protocol):
-    """Protocol for persistent conversation history storage."""
+    """Protocol for persistent conversation history storage.
 
-    def append_turn(self, session_id: str, turn: ConversationTurn) -> None: ...
-    def load_turns(self, session_id: str, limit: int | None = None) -> list[ConversationTurn]: ...
-    def save_summary_tiers(self, session_id: str, tiers: dict[int, SummaryTier | None]) -> None: ...
-    def load_summary_tiers(self, session_id: str) -> dict[int, SummaryTier | None]: ...
-    def truncate_turns(self, session_id: str, keep_last: int) -> None: ...
-    def delete_session(self, session_id: str) -> bool: ...
-    def list_sessions(self) -> list[str]: ...
-    def clear(self) -> None: ...
+    Stores an append-only log of conversation turns per session, plus
+    optional summary tiers produced by progressive summarisation.
+
+    Behavioural contract
+    --------------------
+    * Turns are ordered by ``turn_index`` within each session.
+    * ``load_turns`` returns turns in chronological order.
+    * ``truncate_turns`` preserves only the last *keep_last* turns.
+    * ``delete_session`` removes both turns and summary tiers atomically.
+    * ``list_sessions`` returns sessions that have turns *or* tiers.
+    """
+
+    def append_turn(self, session_id: str, turn: ConversationTurn) -> None:
+        """Append a conversation turn to the session log."""
+        ...
+
+    def load_turns(self, session_id: str, limit: int | None = None) -> list[ConversationTurn]:
+        """Load turns for a session, optionally limited to the last *limit*.
+
+        Returns:
+            Turns in chronological order.
+        """
+        ...
+
+    def save_summary_tiers(self, session_id: str, tiers: dict[int, SummaryTier | None]) -> None:
+        """Atomically replace all summary tiers for a session."""
+        ...
+
+    def load_summary_tiers(self, session_id: str) -> dict[int, SummaryTier | None]:
+        """Load summary tiers, returning ``{1: None, 2: None, 3: None}`` for missing tiers."""
+        ...
+
+    def truncate_turns(self, session_id: str, keep_last: int) -> None:
+        """Delete all but the last *keep_last* turns in a session."""
+        ...
+
+    def delete_session(self, session_id: str) -> bool:
+        """Delete all turns and summary tiers for a session.
+
+        Returns:
+            ``True`` if any data was deleted.
+        """
+        ...
+
+    def list_sessions(self) -> list[str]:
+        """Return all session IDs that have turns or tiers."""
+        ...
+
+    def clear(self) -> None:
+        """Remove all sessions, turns, and tiers."""
+        ...
 
 
 @runtime_checkable
 class AsyncConversationStore(Protocol):
-    """Async variant of ConversationStore."""
+    """Async variant of :class:`ConversationStore`.  Same behavioural contract."""
 
-    async def append_turn(self, session_id: str, turn: ConversationTurn) -> None: ...
-    async def load_turns(self, session_id: str, limit: int | None = None) -> list[ConversationTurn]: ...
-    async def save_summary_tiers(self, session_id: str, tiers: dict[int, SummaryTier | None]) -> None: ...
-    async def load_summary_tiers(self, session_id: str) -> dict[int, SummaryTier | None]: ...
-    async def truncate_turns(self, session_id: str, keep_last: int) -> None: ...
-    async def delete_session(self, session_id: str) -> bool: ...
-    async def list_sessions(self) -> list[str]: ...
-    async def clear(self) -> None: ...
+    async def append_turn(self, session_id: str, turn: ConversationTurn) -> None:
+        """Append a conversation turn to the session log."""
+        ...
+
+    async def load_turns(self, session_id: str, limit: int | None = None) -> list[ConversationTurn]:
+        """Load turns for a session in chronological order."""
+        ...
+
+    async def save_summary_tiers(self, session_id: str, tiers: dict[int, SummaryTier | None]) -> None:
+        """Atomically replace all summary tiers for a session."""
+        ...
+
+    async def load_summary_tiers(self, session_id: str) -> dict[int, SummaryTier | None]:
+        """Load summary tiers, returning defaults for missing tiers."""
+        ...
+
+    async def truncate_turns(self, session_id: str, keep_last: int) -> None:
+        """Delete all but the last *keep_last* turns in a session."""
+        ...
+
+    async def delete_session(self, session_id: str) -> bool:
+        """Delete all turns and summary tiers for a session."""
+        ...
+
+    async def list_sessions(self) -> list[str]:
+        """Return all session IDs that have turns or tiers."""
+        ...
+
+    async def clear(self) -> None:
+        """Remove all sessions, turns, and tiers."""
+        ...

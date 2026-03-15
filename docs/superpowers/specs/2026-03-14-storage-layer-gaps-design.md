@@ -1,7 +1,7 @@
 # Spec 1: Storage Layer Gaps — GraphStore, ConversationStore, CacheBackends
 
 **Date:** 2026-03-14
-**Status:** Draft
+**Status:** Implemented
 **Scope:** Three new storage protocols + InMemory/SQLite/PostgreSQL backends + Redis/SQLite cache backends
 **Companion Spec:** Spec 2 (Agent Checkpointing + Unified StorageManager) — depends on this spec
 

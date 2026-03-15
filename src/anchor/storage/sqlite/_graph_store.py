@@ -51,8 +51,8 @@ class SqliteGraphStore:
         conn = self._conn_manager.get_connection()
         for nid in (source, target):
             conn.execute(
-                "INSERT OR IGNORE INTO graph_nodes (node_id, metadata_json) VALUES (?, '{}')",
-                (nid,),
+                "INSERT OR IGNORE INTO graph_nodes (node_id, metadata_json) VALUES (?, ?)",
+                (nid, "{}"),
             )
         conn.execute(
             "INSERT OR IGNORE INTO graph_edges (source, relation, target, metadata_json) "
@@ -128,18 +128,12 @@ class SqliteGraphStore:
     def get_memory_ids(self, node_id: str, max_depth: int = 1) -> list[str]:
         all_nodes = [node_id, *self.get_neighbors(node_id, max_depth=max_depth)]
         conn = self._conn_manager.get_connection()
-        result: list[str] = []
-        seen: set[str] = set()
-        for nid in all_nodes:
-            rows = conn.execute(
-                "SELECT memory_id FROM graph_memory_links WHERE node_id = ?", (nid,)
-            ).fetchall()
-            for row in rows:
-                mid = row["memory_id"]
-                if mid not in seen:
-                    seen.add(mid)
-                    result.append(mid)
-        return result
+        placeholders = ",".join("?" for _ in all_nodes)
+        rows = conn.execute(
+            f"SELECT DISTINCT memory_id FROM graph_memory_links WHERE node_id IN ({placeholders})",
+            all_nodes,
+        ).fetchall()
+        return [row["memory_id"] for row in rows]
 
     def remove_node(self, node_id: str) -> None:
         conn = self._conn_manager.get_connection()
@@ -218,8 +212,8 @@ class AsyncSqliteGraphStore:
         conn = await self._conn_manager.get_async_connection()
         for nid in (source, target):
             await conn.execute(
-                "INSERT OR IGNORE INTO graph_nodes (node_id, metadata_json) VALUES (?, '{}')",
-                (nid,),
+                "INSERT OR IGNORE INTO graph_nodes (node_id, metadata_json) VALUES (?, ?)",
+                (nid, "{}"),
             )
         await conn.execute(
             "INSERT OR IGNORE INTO graph_edges (source, relation, target, metadata_json) "
@@ -300,19 +294,13 @@ class AsyncSqliteGraphStore:
     async def get_memory_ids(self, node_id: str, max_depth: int = 1) -> list[str]:
         all_nodes = [node_id, *(await self.get_neighbors(node_id, max_depth=max_depth))]
         conn = await self._conn_manager.get_async_connection()
-        result: list[str] = []
-        seen: set[str] = set()
-        for nid in all_nodes:
-            cursor = await conn.execute(
-                "SELECT memory_id FROM graph_memory_links WHERE node_id = ?", (nid,)
-            )
-            rows = await cursor.fetchall()
-            for row in rows:
-                mid = row["memory_id"]
-                if mid not in seen:
-                    seen.add(mid)
-                    result.append(mid)
-        return result
+        placeholders = ",".join("?" for _ in all_nodes)
+        cursor = await conn.execute(
+            f"SELECT DISTINCT memory_id FROM graph_memory_links WHERE node_id IN ({placeholders})",
+            all_nodes,
+        )
+        rows = await cursor.fetchall()
+        return [row["memory_id"] for row in rows]
 
     async def remove_node(self, node_id: str) -> None:
         conn = await self._conn_manager.get_async_connection()

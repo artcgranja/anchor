@@ -155,7 +155,7 @@ class InMemoryDocumentStore:
 class InMemoryGraphStore:
     """Dict-backed graph store. Implements GraphStore protocol."""
 
-    __slots__ = ("_adjacency", "_adjacency_dirty", "_edge_metadata", "_edges",
+    __slots__ = ("_edge_metadata", "_edges",
                  "_entity_to_memories", "_lock", "_nodes")
 
     def __init__(self) -> None:
@@ -163,8 +163,6 @@ class InMemoryGraphStore:
         self._edges: list[tuple[str, str, str]] = []
         self._edge_metadata: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._entity_to_memories: dict[str, list[str]] = {}
-        self._adjacency: dict[str, set[str]] = {}
-        self._adjacency_dirty: bool = True
         self._lock = threading.Lock()
 
     def add_node(self, node_id: str, metadata: dict[str, Any] | None = None) -> None:
@@ -191,7 +189,6 @@ class InMemoryGraphStore:
                 self._edge_metadata[edge_key] = metadata
             elif edge_key not in self._edge_metadata:
                 self._edge_metadata[edge_key] = {}
-            self._adjacency_dirty = True
 
     def _rebuild_adjacency(self, relation_filter: str | list[str] | None = None) -> dict[str, set[str]]:
         """Build adjacency index, optionally filtered by relation types."""
@@ -295,7 +292,6 @@ class InMemoryGraphStore:
                 if key[0] == node_id or key[2] == node_id:
                     del self._edge_metadata[key]
             self._entity_to_memories.pop(node_id, None)
-            self._adjacency_dirty = True
 
     def remove_edge(self, source: str, relation: str, target: str) -> bool:
         with self._lock:
@@ -303,7 +299,6 @@ class InMemoryGraphStore:
             if edge_key in self._edge_metadata:
                 self._edges.remove(edge_key)
                 del self._edge_metadata[edge_key]
-                self._adjacency_dirty = True
                 return True
             return False
 
@@ -321,7 +316,6 @@ class InMemoryGraphStore:
             self._edges.clear()
             self._edge_metadata.clear()
             self._entity_to_memories.clear()
-            self._adjacency_dirty = True
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(nodes={len(self._nodes)}, edges={len(self._edges)})"

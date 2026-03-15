@@ -65,16 +65,17 @@ class PostgresConversationStore:
 
     async def save_summary_tiers(self, session_id: str, tiers: dict[int, SummaryTier | None]) -> None:
         async with self._conn_manager.acquire() as conn:
-            await conn.execute("DELETE FROM summary_tiers WHERE session_id = $1", session_id)
-            for level, tier in tiers.items():
-                if tier is not None:
-                    await conn.execute(
-                        "INSERT INTO summary_tiers "
-                        "(session_id, tier_level, content, token_count, source_turn_count, created_at, updated_at) "
-                        "VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                        session_id, tier.level, tier.content, tier.token_count,
-                        tier.source_turn_count, tier.created_at, tier.updated_at,
-                    )
+            async with conn.transaction():
+                await conn.execute("DELETE FROM summary_tiers WHERE session_id = $1", session_id)
+                for level, tier in tiers.items():
+                    if tier is not None:
+                        await conn.execute(
+                            "INSERT INTO summary_tiers "
+                            "(session_id, tier_level, content, token_count, source_turn_count, created_at, updated_at) "
+                            "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                            session_id, tier.level, tier.content, tier.token_count,
+                            tier.source_turn_count, tier.created_at, tier.updated_at,
+                        )
 
     async def load_summary_tiers(self, session_id: str) -> dict[int, SummaryTier | None]:
         async with self._conn_manager.acquire() as conn:
@@ -111,7 +112,11 @@ class PostgresConversationStore:
         async with self._conn_manager.acquire() as conn:
             r1 = await conn.execute("DELETE FROM conversation_turns WHERE session_id = $1", session_id)
             r2 = await conn.execute("DELETE FROM summary_tiers WHERE session_id = $1", session_id)
-            return (int(r1.split()[-1]) + int(r2.split()[-1])) > 0
+            # asyncpg returns status like "DELETE N"
+            try:
+                return (int(r1.split()[-1]) + int(r2.split()[-1])) > 0
+            except (ValueError, IndexError):
+                return False
 
     async def list_sessions(self) -> list[str]:
         async with self._conn_manager.acquire() as conn:

@@ -331,3 +331,5 @@ class MemoryManager:
         self._conversation.clear()
         if self._persistent_store is not None:
             self._persistent_store.clear()
+        if self._conversation_store is not None and self._session_id is not None:
+            self._conversation_store.delete_session(self._session_id)

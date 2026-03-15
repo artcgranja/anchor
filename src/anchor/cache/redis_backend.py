@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import logging
+import math
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -44,7 +45,7 @@ class RedisCacheBackend:
         serialized = json.dumps(value, default=str)
         full_key = self._full_key(key)
         if effective_ttl is not None:
-            client.setex(full_key, int(effective_ttl), serialized)
+            client.setex(full_key, max(1, math.ceil(effective_ttl)), serialized)
         else:
             client.set(full_key, serialized)
 
@@ -55,8 +56,14 @@ class RedisCacheBackend:
     def clear(self) -> None:
         client = self._conn_manager.get_client()
         pattern = f"{self._conn_manager.prefix}{self._key_prefix}*"
+        batch: list[str] = []
         for redis_key in client.scan_iter(match=pattern):
-            client.delete(redis_key)
+            batch.append(redis_key)
+            if len(batch) >= 1000:
+                client.delete(*batch)
+                batch.clear()
+        if batch:
+            client.delete(*batch)
 
     def __repr__(self) -> str:
         return f"RedisCacheBackend(default_ttl={self._default_ttl}, key_prefix={self._key_prefix!r})"

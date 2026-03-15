@@ -78,7 +78,8 @@ _TABLES: list[str] = [
         content       TEXT NOT NULL,
         token_count   INTEGER NOT NULL DEFAULT 0,
         metadata_json TEXT NOT NULL DEFAULT '{}',
-        created_at    TEXT NOT NULL
+        created_at    TEXT NOT NULL,
+        UNIQUE (session_id, turn_index)
     )""",
     """CREATE TABLE IF NOT EXISTS summary_tiers (
         session_id       TEXT NOT NULL,

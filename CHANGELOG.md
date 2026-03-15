@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `GraphStore` and `AsyncGraphStore` protocols for persistent graph storage (nodes, edges, BFS traversal, relation filtering, memory linking)
+- `ConversationStore` and `AsyncConversationStore` protocols for persistent conversation history (append-only turns, session scoping, summary tier persistence)
+- `InMemoryGraphStore` — thread-safe, dict-backed graph store with cycle-safe BFS
+- `InMemoryConversationStore` — thread-safe, session-scoped conversation store
+- `SqliteGraphStore` and `AsyncSqliteGraphStore` — SQLite-backed graph persistence with parameterized queries
+- `SqliteConversationStore` and `AsyncSqliteConversationStore` — SQLite-backed conversation persistence with UNIQUE(session_id, turn_index) constraint
+- `PostgresGraphStore` — asyncpg-backed graph store with recursive CTE traversal
+- `PostgresConversationStore` — asyncpg-backed conversation store with transaction-safe summary tier persistence
+- `SqliteCacheBackend` — SQLite-backed cache with lazy TTL expiration via `time.time()`
+- `RedisCacheBackend` — Redis-backed cache using SETEX for TTL, batched `clear()`, `math.ceil` for sub-second TTL safety
+- Conversation turn and summary tier serialization helpers in `anchor.storage._serialization`
+- `MemoryManager` integration: `conversation_store`, `session_id`, `auto_persist`, `save()`, `load()`, `_is_loading` guard
+- `MemoryManager.clear()` now also clears the conversation store when configured
+- `ProgressiveSummarizationMemory` tier persistence through `ConversationStore`
+- SQLite schema tables: `graph_nodes`, `graph_edges`, `graph_memory_links`, `conversation_turns`, `summary_tiers`, `cache_entries`
+- Full protocol method docstrings for `GraphStore`, `AsyncGraphStore`, `ConversationStore`, `AsyncConversationStore` with behavioural contracts
+- Comprehensive test suites: graph store (25+ tests), conversation store (14+ tests), persistent memory integration (4 tests), cache backends (16 tests)
 - Multi-provider LLM interface (`anchor.llm`) with support for Anthropic, OpenAI, Gemini, Grok, Ollama, OpenRouter, and LiteLLM
 - `LLMProvider` protocol and `BaseLLMProvider` ABC with built-in retry and timeout logic
 - `create_provider()` factory with `"provider/model"` string format and automatic lazy loading
