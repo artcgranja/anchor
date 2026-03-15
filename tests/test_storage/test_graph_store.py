@@ -198,3 +198,74 @@ class TestSimpleGraphMemoryBackwardsCompat:
         graph.add_relationship("alice", "manages", "dave")
         neighbors = graph.get_related_entities("alice", relation_filter=["knows", "works_with"])
         assert sorted(neighbors) == ["bob", "carol"]
+
+
+import pytest
+from anchor.storage.sqlite import SqliteConnectionManager
+
+
+@pytest.fixture
+def sqlite_graph_store(tmp_path):
+    from anchor.storage.sqlite._graph_store import SqliteGraphStore
+    conn_mgr = SqliteConnectionManager(tmp_path / "test.db")
+    return SqliteGraphStore(conn_mgr)
+
+
+class TestSqliteGraphStore:
+    def test_satisfies_protocol(self, sqlite_graph_store):
+        assert isinstance(sqlite_graph_store, GraphStore)
+
+    def test_add_and_list_nodes(self, sqlite_graph_store):
+        sqlite_graph_store.add_node("alice", {"type": "person"})
+        assert "alice" in sqlite_graph_store.list_nodes()
+
+    def test_add_and_list_edges(self, sqlite_graph_store):
+        sqlite_graph_store.add_edge("alice", "knows", "bob")
+        assert ("alice", "knows", "bob") in sqlite_graph_store.list_edges()
+
+    def test_get_neighbors_depth_1(self, sqlite_graph_store):
+        sqlite_graph_store.add_edge("alice", "knows", "bob")
+        sqlite_graph_store.add_edge("bob", "knows", "carol")
+        neighbors = sqlite_graph_store.get_neighbors("alice", max_depth=1)
+        assert neighbors == ["bob"]
+
+    def test_get_neighbors_depth_2(self, sqlite_graph_store):
+        sqlite_graph_store.add_edge("alice", "knows", "bob")
+        sqlite_graph_store.add_edge("bob", "knows", "carol")
+        neighbors = sqlite_graph_store.get_neighbors("alice", max_depth=2)
+        assert sorted(neighbors) == ["bob", "carol"]
+
+    def test_get_neighbors_with_relation_filter(self, sqlite_graph_store):
+        sqlite_graph_store.add_edge("alice", "knows", "bob")
+        sqlite_graph_store.add_edge("alice", "works_with", "carol")
+        neighbors = sqlite_graph_store.get_neighbors("alice", relation_filter="knows")
+        assert neighbors == ["bob"]
+
+    def test_link_and_get_memory_ids(self, sqlite_graph_store):
+        sqlite_graph_store.add_node("alice")
+        sqlite_graph_store.link_memory("alice", "mem-001")
+        ids = sqlite_graph_store.get_memory_ids("alice")
+        assert ids == ["mem-001"]
+
+    def test_remove_node(self, sqlite_graph_store):
+        sqlite_graph_store.add_edge("alice", "knows", "bob")
+        sqlite_graph_store.remove_node("alice")
+        assert "alice" not in sqlite_graph_store.list_nodes()
+        assert sqlite_graph_store.list_edges() == []
+
+    def test_remove_edge(self, sqlite_graph_store):
+        sqlite_graph_store.add_edge("alice", "knows", "bob")
+        assert sqlite_graph_store.remove_edge("alice", "knows", "bob") is True
+        assert sqlite_graph_store.list_edges() == []
+
+    def test_clear(self, sqlite_graph_store):
+        sqlite_graph_store.add_edge("alice", "knows", "bob")
+        sqlite_graph_store.clear()
+        assert sqlite_graph_store.list_nodes() == []
+
+    def test_handles_cycles(self, sqlite_graph_store):
+        sqlite_graph_store.add_edge("a", "r", "b")
+        sqlite_graph_store.add_edge("b", "r", "c")
+        sqlite_graph_store.add_edge("c", "r", "a")
+        neighbors = sqlite_graph_store.get_neighbors("a", max_depth=5)
+        assert sorted(neighbors) == ["b", "c"]
