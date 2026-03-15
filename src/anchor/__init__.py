@@ -313,6 +313,12 @@ from anchor.protocols import (
     TokenLevelEncoder,
     VectorStore,
 )
+from anchor.protocols.storage import (
+    AsyncConversationStore,
+    AsyncGraphStore,
+    ConversationStore,
+    GraphStore,
+)
 from anchor.query import (
     CallbackClassifier,
     ContextualQueryTransformer,
@@ -358,6 +364,10 @@ from anchor.storage import (
     InMemoryEntryStore,
     InMemoryVectorStore,
     JsonFileMemoryStore,
+)
+from anchor.storage.memory_store import (
+    InMemoryConversationStore,
+    InMemoryGraphStore,
 )
 from anchor.tokens import TiktokenCounter
 from anchor.llm import (
@@ -411,6 +421,8 @@ __all__ = [
     "AsyncPostProcessor",
     "AsyncQueryTransformer",
     "AsyncReranker",
+    "AsyncConversationStore",
+    "AsyncGraphStore",
     "AsyncRetriever",
     "BaseFormatter",
     "BaseLLMProvider",
@@ -436,6 +448,7 @@ __all__ = [
     "ContextWindow",
     "ContextualQueryTransformer",
     "ConversationMemory",
+    "ConversationStore",
     "ConversationRewriter",
     "ConversationTurn",
     "CostEntry",
@@ -466,6 +479,7 @@ __all__ = [
     "GCStats",
     "GarbageCollectableStore",
     "GenericTextFormatter",
+    "GraphStore",
     "HTMLParser",
     "HTMLTableParser",
     "HumanEvaluationCollector",
@@ -476,9 +490,11 @@ __all__ = [
     "ImageDescriptionEncoder",
     "ImportanceEviction",
     "InMemoryCacheBackend",
+    "InMemoryConversationStore",
     "InMemoryContextStore",
     "InMemoryDocumentStore",
     "InMemoryEntryStore",
+    "InMemoryGraphStore",
     "InMemoryMetricsCollector",
     "InMemorySpanExporter",
     "InMemoryVectorStore",
