@@ -2,6 +2,12 @@
 
 from anchor.models.memory import ConversationTurn, SummaryTier
 from anchor.protocols.storage import ConversationStore
+from anchor.storage._serialization import (
+    conversation_turn_to_row,
+    row_to_conversation_turn,
+    summary_tier_to_row,
+    row_to_summary_tier,
+)
 from anchor.storage.memory_store import InMemoryConversationStore
 
 
@@ -11,6 +17,23 @@ def _turn(role: str, content: str) -> ConversationTurn:
 
 def _tier(level: int, content: str, turn_count: int = 1) -> SummaryTier:
     return SummaryTier(level=level, content=content, token_count=10, source_turn_count=turn_count)
+
+
+class TestConversationSerialization:
+    def test_turn_round_trip(self):
+        turn = _turn("user", "hello world")
+        row = conversation_turn_to_row(turn)
+        restored = row_to_conversation_turn(row)
+        assert restored.role == turn.role
+        assert restored.content == turn.content
+
+    def test_tier_round_trip(self):
+        tier = _tier(1, "summary text", turn_count=5)
+        row = summary_tier_to_row(tier)
+        restored = row_to_summary_tier(row)
+        assert restored.level == tier.level
+        assert restored.content == tier.content
+        assert restored.source_turn_count == 5
 
 
 class TestInMemoryConversationStoreProtocol:

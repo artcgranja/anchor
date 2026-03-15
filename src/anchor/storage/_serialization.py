@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from anchor.models.context import ContextItem, SourceType
-from anchor.models.memory import MemoryEntry
+from anchor.models.memory import ConversationTurn, MemoryEntry, SummaryTier
 
 
 def context_item_to_row(item: ContextItem) -> dict[str, Any]:
@@ -86,6 +86,54 @@ def row_to_memory_entry(row: dict[str, Any] | Any) -> MemoryEntry:
         content_hash=r["content_hash"],
         source_turns=json.loads(r["source_turns_json"]),
         links=json.loads(r["links_json"]),
+    )
+
+
+def conversation_turn_to_row(turn: ConversationTurn) -> dict[str, Any]:
+    """Convert a ConversationTurn to a flat dict for SQL INSERT."""
+    return {
+        "role": str(turn.role),
+        "content": turn.content,
+        "token_count": turn.token_count,
+        "metadata_json": json.dumps(turn.metadata, default=str),
+        "created_at": turn.timestamp.isoformat(),
+    }
+
+
+def row_to_conversation_turn(row: dict[str, Any] | Any) -> ConversationTurn:
+    """Reconstruct a ConversationTurn from a database row."""
+    r = dict(row) if not isinstance(row, dict) else row
+    return ConversationTurn(
+        role=r["role"],
+        content=r["content"],
+        token_count=r.get("token_count", 0),
+        metadata=json.loads(r.get("metadata_json", "{}")),
+        timestamp=datetime.fromisoformat(r["created_at"]),
+    )
+
+
+def summary_tier_to_row(tier: SummaryTier) -> dict[str, Any]:
+    """Convert a SummaryTier to a flat dict for SQL INSERT."""
+    return {
+        "tier_level": tier.level,
+        "content": tier.content,
+        "token_count": tier.token_count,
+        "source_turn_count": tier.source_turn_count,
+        "created_at": tier.created_at.isoformat(),
+        "updated_at": tier.updated_at.isoformat(),
+    }
+
+
+def row_to_summary_tier(row: dict[str, Any] | Any) -> SummaryTier:
+    """Reconstruct a SummaryTier from a database row."""
+    r = dict(row) if not isinstance(row, dict) else row
+    return SummaryTier(
+        level=r["tier_level"],
+        content=r["content"],
+        token_count=r["token_count"],
+        source_turn_count=r["source_turn_count"],
+        created_at=datetime.fromisoformat(r["created_at"]),
+        updated_at=datetime.fromisoformat(r["updated_at"]),
     )
 
 
